@@ -1,7 +1,8 @@
 /**
  * JD Vertrieb: Schnittstelle zwischen der App und den Lead-Tabellen von Meta.
- * Liegt in einer eigenen Google-Tabelle "JD Vertrieb". In deren erstem Reiter steht in Spalte A
- * je Zeile der Link zu einer Lead-Tabelle (eine pro Kampagne). Spalte B füllt das Skript mit dem Namen.
+ * Liegt in einer eigenen Google-Tabelle oder als zweite Datei neben dem Sortier-Skript in einer Lead-Tabelle.
+ * In irgendeinem Reiter dieser Tabelle steht in Spalte A je Zeile der Link zu einer Lead-Tabelle
+ * (eine pro Kampagne). Spalte B füllt das Skript mit dem Namen.
  *
  * Die Lead-Tabellen bleiben, wie Meta und das Sortier-Skript sie anlegen. Die App schreibt nur in
  * lead_status, Notiz und Termin. Die KI-Zusammenfassung wird als Eintrag an die Notiz angehängt.
@@ -51,23 +52,31 @@ function pruefe(pw) {
   if (pw !== soll) { cache.put('fehlversuche', String(fehl + 1), 600); throw fehler('pw', 'Falsches Passwort.'); }
 }
 
-// Verbundene Lead-Tabellen: erster Reiter dieser Tabelle, Spalte A = Link, Spalte B = Name.
+// Verbundene Lead-Tabellen: Links in Spalte A, egal in welchem Reiter dieser Tabelle. Spalte B = Name.
 function verbunden() {
-  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
-  if (!sh.getLastRow()) return [];
-  return sh.getRange(1, 1, sh.getLastRow(), 2).getValues().map((z, i) => {
-    const m = String(z[0]).match(/\/d\/([\w-]{20,})/) || String(z[0]).trim().match(/^([\w-]{20,})$/);
-    return m && { id: m[1], name: String(z[1]), namensZelle: sh.getRange(i + 1, 2) };
-  }).filter(Boolean);
+  const liste = [];
+  SpreadsheetApp.getActiveSpreadsheet().getSheets().forEach((sh) => {
+    if (!sh.getLastRow()) return;
+    sh.getRange(1, 1, sh.getLastRow(), 2).getValues().forEach((z, i) => {
+      const m = String(z[0]).match(/\/d\/([\w-]{20,})/) || String(z[0]).trim().match(/^([\w-]{20,})$/);
+      if (m && !liste.some((v) => v.id === m[1])) liste.push({ id: m[1], name: String(z[1]), namensZelle: sh.getRange(i + 1, 2) });
+    });
+  });
+  return liste;
 }
 
 // Eine Lead-Tabelle lesen. Meta schiebt neue Leads über die Kopfzeile, bis das Sortier-Skript sie
 // wieder nach oben holt. Deshalb wird die Kopfzeile gesucht und jede andere Zeile ist ein Lead.
+// Gelesen wird der erste Reiter mit so einer Kopfzeile, andere Reiter (Links, Feedback) bleiben außen vor.
 function oeffne(id) {
   const ss = SpreadsheetApp.openById(id);
-  const sheet = ss.getSheets()[0];
-  const werte = sheet.getDataRange().getValues();
-  const k = werte.findIndex((z) => z.includes('id') && z.includes('created_time'));
+  let sheet, werte, k = -1;
+  ss.getSheets().some((sh) => {
+    sheet = sh;
+    werte = sh.getDataRange().getValues();
+    k = werte.findIndex((z) => z.includes('id') && z.includes('created_time'));
+    return k >= 0;
+  });
   if (k < 0) throw fehler('kopf', 'In „' + ss.getName() + '“ fehlt die Kopfzeile mit id und created_time.');
   const kopf = werte[k].map((h) => String(h).trim());
   const sp = (name) => kopf.indexOf(name);

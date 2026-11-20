@@ -36,13 +36,14 @@ function welt(props) {
     SpreadsheetApp: {
       flush() {},
       getActiveSpreadsheet: () => ({
-        getSheets: () => [heim], getUrl: () => 'https://heim',
+        // Skript liegt in einer Lead-Tabelle: erster Reiter sind Leads, die Links stehen im zweiten
+        getSheets: () => [blatt([['id', 'created_time'], ['l:77', '20.11.2026 10:00']]), heim], getUrl: () => 'https://heim',
         getSheetByName: (n) => (n === 'Feedback' && feedback.length ? { appendRow: (r) => feedback.push(r) } : null),
         insertSheet: () => ({ appendRow: (r) => feedback.push(r) }),
       }),
       openById: (id) => {
         if (id !== A) throw new Error('Datei nicht gefunden');
-        return { getSheets: () => [lead], getName: () => 'Leads November 2026', getUrl: () => 'https://a', getSpreadsheetTimeZone: () => 'Europe/Berlin' };
+        return { getSheets: () => [blatt([['Nur ein Hinweis']]), lead], getName: () => 'Leads November 2026', getUrl: () => 'https://a', getSpreadsheetTimeZone: () => 'Europe/Berlin' };
       },
     },
     PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] }) },

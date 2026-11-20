@@ -6,6 +6,8 @@ Handy-App für die Meta-Leads von JD Brüder. Neue Leads sehen, mit einem Tipp a
 - **Daten:** bleiben in den Lead-Tabellen, in die Meta die Leads einträgt (eine Tabelle pro Kampagne, z. B. „Leads November 2026“). Welche Tabellen die App liest, steht in einer kleinen Google-Tabelle „JD Vertrieb“. Dort liegt auch das Skript `apps-script/vertrieb.gs`, das die Leads an die App liefert und Status, Notiz und Termin zurückschreibt.
 - **Geheimnisse:** Team-Passwort und Claude-Schlüssel liegen nur in den Skripteigenschaften bei Google, nie im Code.
 
+Das Skript darf auch als zweite Datei neben dem Sortier-Skript in einer Lead-Tabelle liegen (so ist es bei JD gerade, in „Leads Nov 2026“). Die Links zu den Lead-Tabellen stehen dann in einem eigenen Reiter in Spalte A. Das Sortier-Skript bleibt dabei in seiner eigenen Datei, sonst sortiert und färbt niemand mehr.
+
 Ohne eingetragene Schnittstelle (`config.js` leer) läuft die App im Demo-Modus mit Beispiel-Leads.
 
 ## Einrichten (einmalig, ca. 10 Minuten)
