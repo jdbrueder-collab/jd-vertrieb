@@ -227,24 +227,28 @@ function ki(d) {
     'Du bist Vertriebsassistent von JD Brüder, Fahrzeugaufbereitung und Detailing in Puderbach im Westerwald. ' +
     'Du fasst Notizen aus Telefonaten mit Interessenten zusammen, die über Meta-Anzeigen gekommen sind. ' +
     'Schreib auf Deutsch, kurz und sachlich, ohne Gedankenstriche. Erfinde nichts, was nicht in den Notizen steht.\n' +
-    'zusammenfassung: 2 bis 4 kurze Sätze. Was will der Kunde, welches Fahrzeug, Budget oder Paket, wie ist die Stimmung.\n' +
-    'naechster_schritt: ein Satz, was das Team als Nächstes tun soll.\n' +
+    'stichpunkte: 1 bis 3 Stichpunkte, je höchstens 8 Wörter, nur was in den Telefonaten passiert ist oder neu erfahren wurde ' +
+    '(z. B. „Fr. angerufen, nicht erreicht“, „Will Komplettpaket, Budget 500 €“). Nichts aus dem Formular wiederholen, ' +
+    'nichts über fehlende Infos schreiben.\n' +
+    'naechster_schritt: höchstens 6 Wörter, z. B. „Montag nochmal anrufen“.\n' +
     'status: der passende Status für den Lead.\n' +
     'naechster_kontakt: Datum im Format YYYY-MM-DD, wenn ein Rückruf oder Termin vereinbart oder sinnvoll ist, sonst leer.',
     text,
     {
       type: 'object',
       properties: {
-        zusammenfassung: { type: 'string' },
+        stichpunkte: { type: 'array', items: { type: 'string' } },
         naechster_schritt: { type: 'string' },
         status: { type: 'string', enum: STATUS },
         naechster_kontakt: { type: 'string' },
       },
-      required: ['zusammenfassung', 'naechster_schritt', 'status', 'naechster_kontakt'],
+      required: ['stichpunkte', 'naechster_schritt', 'status', 'naechster_kontakt'],
       additionalProperties: false,
     }
   );
-  const lead = speichern({ id: d.id, ki: r.zusammenfassung + '\nNächster Schritt: ' + r.naechster_schritt }).lead;
+  const kurz = (t) => String(t).replace(/\s+/g, ' ').trim(); // keine Leerzeilen, die würden den KI-Eintrag in der Notiz zerteilen
+  const kiText = r.stichpunkte.slice(0, 3).map((p) => '• ' + kurz(p)).concat('Nächster Schritt: ' + kurz(r.naechster_schritt)).join('\n');
+  const lead = speichern({ id: d.id, ki: kiText }).lead;
   const datum = /^\d{4}-\d{2}-\d{2}$/.test(r.naechster_kontakt) ? r.naechster_kontakt : '';
   return { lead, vorschlag: { status: r.status, naechster: datum } };
 }

@@ -61,7 +61,7 @@ function welt(props) {
     ContentService: { createTextOutput: (t) => ({ t, setMimeType() { return this; } }), MimeType: { JSON: 'json' } },
     UrlFetchApp: { fetch: (url, o) => {
       claudeBody = { url, headers: o.headers, body: JSON.parse(o.payload) };
-      const antwort = { zusammenfassung: 'Will den Audi aufbereiten lassen.', naechster_schritt: 'Freitag zurückrufen.', status: 'Zurückrufen', naechster_kontakt: '2026-11-27' };
+      const antwort = { stichpunkte: ['Will Komplettpaket', 'Ruft\n\nnach Rücksprache zurück'], naechster_schritt: 'Freitag zurückrufen', status: 'Zurückrufen', naechster_kontakt: '2026-11-27' };
       return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: JSON.stringify(antwort) }] }) };
     } },
   };
@@ -129,9 +129,9 @@ assert.strictEqual(c.body.model, 'claude-opus-5-5');
 assert.strictEqual(c.body.output_config.format.type, 'json_schema');
 assert.match(c.body.messages[0].content, /Erster Anruf/);
 assert.match(c.body.messages[0].content, /Fahrzeug: Audi A6/);
-assert.strictEqual(r.lead.ki, 'Will den Audi aufbereiten lassen.\nNächster Schritt: Freitag zurückrufen.');
+assert.strictEqual(r.lead.ki, '• Will Komplettpaket\n• Ruft nach Rücksprache zurück\nNächster Schritt: Freitag zurückrufen');
 assert.doesNotMatch(r.lead.notizen, /KI:/);               // Verlauf zeigt nur, was das Team geschrieben hat
-assert.match(zeileAnna[9], /\n\n20\.11\.26 14:03 KI: Will den Audi/);
+assert.match(zeileAnna[9], /\n\n20\.11\.26 14:03 KI: • Will Komplettpaket\n/);
 assert.strictEqual(JSON.stringify(r.vorschlag), '{"status":"Zurückrufen","naechster":"2026-11-27"}');
 
 // Feedback
