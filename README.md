@@ -35,7 +35,7 @@ Kann eine Tabelle nicht gelesen werden (falscher Link, kein Zugriff), zeigt die 
 
 Erwartet wird der Aufbau der Meta-Leadlisten mit dem Sortier-Skript: Kopfzeile mit `id`, `created_time`, `full_name`, `phone_number`, `lead_status`, `Notiz` und `Termin`. Alle anderen Spalten wie `interesse` oder `fahrzeug` zeigt die App als Angaben aus dem Formular.
 
-- **lead_status:** Werte wie im Dropdown (Offen, Zurückrufen, Terminiert, Nicht erreicht, Unqualifiziert, Auftrag). Leer heißt in der App „Neu“.
+- **lead_status:** Werte wie im Dropdown (Offen, Zurückrufen, Terminiert, Nicht erreicht, Unqualifiziert, Auftrag). Leer oder „Neu“ (weiße Zeile, zum Zurücksetzen nach einem Fehltipp) heißt in der App „Neu“.
 - **Notiz:** Neue Notizen werden mit Datum, Uhrzeit und Namen angehängt, nie überschrieben. Die KI-Zusammenfassung landet als eigener Eintrag „KI:“ in derselben Zelle.
 - **Termin:** Datum für Termin oder Rückruf.
 - **id:** Von Hand eingetragene Leads ohne id bekommen eine („manuell-…“), damit die App sie speichern kann.
