@@ -1,6 +1,7 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '3';
+const VERSION = '4';
+const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'rgba(255,255,255,.35)' };
 const AKTIV = ['Neu', 'Offen', 'Nicht erreicht', 'Zurückrufen', 'Terminiert'];
@@ -28,6 +29,9 @@ let leads = [], tabellen = [], heimUrl = '', stand = null, laedt = false, fehler
 let tab = 'anrufen', filter = 'Aktiv', suche = '';
 let offen = null;            // Lead, der gerade im Sheet offen ist
 const vorschlag = {};        // KI-Vorschläge je Lead
+const fotoCache = {}, fotoStand = {}, fotoRest = {};   // Fotos je Lead, laufender Upload, nicht hochgeladene Fotos
+let ziel = decodeURIComponent((location.hash.match(/^#lead=(.+)$/) || [])[1] || '');   // Tipp auf eine Benachrichtigung
+if (ziel) history.replaceState(null, '', location.pathname + location.search);
 const angemeldet = () => DEMO || !!konto.pw;
 
 // ---------- Server ----------
@@ -57,6 +61,7 @@ async function laden(still) {
   // Wer gerade tippt (Suche, Name), verliert durch das Nachladen nicht den Cursor
   if (view.contains(document.activeElement) && document.activeElement.matches('input,textarea')) { if ($('#liste')) $('#liste').innerHTML = listeHtml(); }
   else render();
+  if (ziel && leads.some(l => l.id === ziel)) { const z = ziel; ziel = ''; openLead(z); }
 }
 
 // ---------- Navigation ----------
@@ -163,6 +168,8 @@ function renderSetup() {
     <div class="label">App</div>
     <div class="group">
       <button class="row" onclick="installHilfe()"><span>📲 Auf den Startbildschirm</span><span>›</span></button>
+      ${pushOk() ? `<button class="row" onclick="pushEin()"><span>🔔 Benachrichtigungen</span><span>${Notification.permission === 'granted' ? 'An' : 'Einschalten ›'}</span></button>`
+        : '<div class="row"><span>🔔 Benachrichtigungen</span><span class="muted">Erst auf den Startbildschirm</span></div>'}
       <div class="row"><span>Version</span><span>${VERSION}</span></div>
     </div>
     ${DEMO ? '' : '<button class="pill wide" style="color:var(--minus);margin-top:var(--gap-l)" onclick="abmelden()">Abmelden</button>'}`;
@@ -207,6 +214,7 @@ function openLead(id, fokus) {
   const l = leads.find(x => x.id === id); if (!l) return;
   offen = id;
   sheet(leadHtml(l));
+  if (!fotoCache[id]) fotosLaden(id);
   const entwurf = lies('jdv-entwurf', {});
   if (entwurf[id]) { $('#notiz').value = entwurf[id]; delete entwurf[id]; merke('jdv-entwurf', entwurf); }
   if (fokus) setTimeout(() => $('#notiz')?.focus(), 300);
@@ -242,6 +250,8 @@ function leadHtml(l) {
       ${l.notizen ? `<button class="pill wide" id="kbtn" style="margin:var(--gap) 0 0" onclick="kiStarten(${js(l.id)})">✨ ${l.ki ? 'Neu zusammenfassen' : 'Zusammenfassen'}</button>` : ''}</div>
     <div class="label">Verlauf</div>
     <div class="card verlauf">${l.notizen ? esc(l.notizen) : '<span class="muted">Noch keine Notizen.</span>'}</div>
+    <div class="label">Fotos</div>
+    <div class="card" id="fotos">${fotosHtml(l)}</div>
     <div class="label">Details</div>
     <div class="group">${zeile('Telefon', l.telefon)}${zeile('Eingang', isNaN(eingang) ? '' : eingang.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }))}${l.antworten.map(a => zeile(a[0], a[1])).join('')}${zeile('Anzeige', l.anzeige)}${zeile('Quelle', l.quelle)}${zeile('Tabelle', l.tabelle)}</div>`;
 }
@@ -305,6 +315,63 @@ document.addEventListener('visibilitychange', () => {
     const l = leads.find(x => x.id === a.id);
     if (l) { openLead(a.id, true); toast(`Wie lief es mit ${l.name}?`); }
   }
+});
+
+// ---------- Fotos ----------
+// Volle Auflösung, eins nach dem anderen ins Drive des Skript-Kontos. Was nicht hochgeht, bleibt zum Nochmal-Senden da.
+function fotosHtml(l) {
+  const f = fotoCache[l.id], st = fotoStand[l.id], rest = fotoRest[l.id] || [];
+  const vorname = (l.name || '').split(' ')[0];
+  const wa = `${l.wa || 'https://wa.me/'}?text=${encodeURIComponent(`Hallo${vorname ? ' ' + vorname : ''}, hier sind die Fotos von deinem Auto: ${f?.ordner}`)}`;
+  return `${f?.fotos.length ? `<div class="fotos">${f.fotos.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener">${x.bild ? `<img src="${esc(x.bild)}" alt="${esc(x.name)}" loading="lazy">` : '<span>🖼️</span>'}</a>`).join('')}</div>` : ''}
+    <p class="muted" style="margin:0 0 var(--gap)">${esc(st || (!f ? 'Fotos werden geladen…' : f.fotos.length ? `${f.fotos.length} ${f.fotos.length === 1 ? 'Foto' : 'Fotos'}` : 'Noch keine Fotos. Mach sie, wenn das Auto bei euch steht.'))}</p>
+    <label class="pill wide">📷 Fotos hinzufügen<input type="file" accept="image/*" multiple hidden onchange="fotosHoch(${js(l.id)}, this.files)"></label>
+    ${rest.length && !st ? `<button class="pill wide" onclick="fotosHoch(${js(l.id)}, fotoRest[${js(l.id)}])">↻ ${rest.length} nicht hochgeladene Fotos nochmal senden</button>` : ''}
+    ${f?.fotos.length ? `<div class="two" style="margin:0"><a class="pill" href="${esc(f.ordner)}" target="_blank" rel="noopener">📁 Ordner</a><a class="pill" href="${esc(wa)}" target="_blank" rel="noopener">📤 An Kunden</a></div>` : ''}`;
+}
+const zeigeFotos = id => { const l = leads.find(x => x.id === id); if (offen === id && l && $('#fotos')) $('#fotos').innerHTML = fotosHtml(l); };
+async function fotosLaden(id) {
+  try { fotoCache[id] = await api('fotos', { id }); } catch (e) { fotoCache[id] ||= { fotos: [], ordner: '' }; toast(e.message); }
+  zeigeFotos(id);
+}
+async function fotosHoch(id, dateien) {
+  const liste = [...dateien]; if (!liste.length || fotoStand[id]) return;
+  delete fotoRest[id];
+  for (let i = 0; i < liste.length; i++) {
+    fotoStand[id] = `Lade Foto ${i + 1} von ${liste.length} hoch…`; zeigeFotos(id);
+    try {
+      const daten = await new Promise((ok, nein) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1]); r.onerror = () => nein(new Error('Foto ließ sich nicht lesen.')); r.readAsDataURL(liste[i]); });
+      await api('foto', { id, typ: liste[i].type || 'image/jpeg', nr: i + 1, daten });
+    } catch (e) { fotoRest[id] = liste.slice(i); toast(`Foto ${i + 1} ging nicht hoch: ${e.message}`); break; }
+  }
+  delete fotoStand[id];
+  if (!fotoRest[id]) toast(`📷 ${liste.length === 1 ? '1 Foto' : liste.length + ' Fotos'} gespeichert`);
+  await fotosLaden(id);
+}
+
+// ---------- Benachrichtigungen ----------
+// Versand über den kleinen Dienst bei Cloudflare (push/), ausgelöst vom Google-Skript. Auf dem iPhone geht Push
+// nur in der installierten App (ab iOS 16.4) und erst, nachdem man es einmal erlaubt hat.
+const pushOk = () => 'PushManager' in window && 'serviceWorker' in navigator && 'Notification' in window;
+async function pushEin(still) {
+  if (DEMO) return still || toast('Demo: Benachrichtigungen gehen nur in der echten App.');
+  if (!pushOk()) return still || toast('Benachrichtigungen gehen erst, wenn die App auf dem Startbildschirm liegt.');
+  try {
+    if (!still && await Notification.requestPermission() !== 'granted') return toast('Benachrichtigungen sind nicht erlaubt. Du kannst sie in den iPhone-Einstellungen unter Mitteilungen einschalten.');
+    if (Notification.permission !== 'granted') return;
+    const reg = await navigator.serviceWorker.ready;
+    const abo = await reg.pushManager.getSubscription()
+      || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: Uint8Array.from(atob(PUSH_KEY.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0)) });
+    await api('push', { abo: abo.toJSON() });
+    if (!still) { toast('🔔 Benachrichtigungen sind an'); render(); }
+  } catch (e) { if (!still) toast('Benachrichtigungen gingen nicht an: ' + e.message); }
+}
+// Tipp auf eine Benachrichtigung, während die App schon offen ist
+navigator.serviceWorker?.addEventListener('message', e => {
+  const m = String(e.data?.open || '').match(/#lead=(.+)$/);
+  if (!m) return laden();
+  ziel = decodeURIComponent(m[1]);
+  if (leads.some(l => l.id === ziel)) { const z = ziel; ziel = ''; openLead(z); } else laden();
 });
 
 // ---------- Fenster, Meldungen ----------
@@ -479,6 +546,8 @@ function demoApi(aktion, d) {
     const jetzt = new Date().toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', '');
     if (aktion === 'liste') return ok({ leads: kopie(DL), tabellen: [{ name: 'Leads November 2026', anzahl: DL.length }], heimUrl: '' });
     if (aktion === 'feedback') return ok({});
+    if (aktion === 'push' || aktion === 'foto') return ok({});
+    if (aktion === 'fotos') return ok({ fotos: [], ordner: '' });
     if (aktion === 'speichern') {
       if (d.status !== undefined) l.status = d.status;
       if (d.naechster !== undefined) l.naechster = d.naechster;
@@ -499,3 +568,5 @@ render();
 laden(true);
 setInterval(() => { if (!document.hidden) laden(true); }, 60000);
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js');
+// Wer Benachrichtigungen schon erlaubt hat, meldet sein Gerät still neu an (das Abo kann sich ändern)
+if (angemeldet() && pushOk() && Notification.permission === 'granted') pushEin(true);

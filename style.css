@@ -100,6 +100,8 @@ textarea{display:block;width:100%;margin:0 0 var(--gap);min-height:110px;padding
 .ki .wait{color:var(--mut)}
 .vorschlag{display:flex;align-items:center;justify-content:space-between;gap:var(--gap);margin-top:var(--gap);padding:10px 10px 10px 14px;border-radius:var(--r-sm);background:color-mix(in srgb,var(--accent) 18%,transparent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);font-size:15px}
 .verlauf{white-space:pre-wrap;line-height:1.45;font-size:15px}
+.fotos{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:0 0 var(--gap)}
+.fotos img,.fotos span{display:grid;place-items:center;width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;background:var(--line)}
 
 /* --- Glas-Look wie die Menüleiste: dunkles, durchsichtiges Glas mit Lichtkante am Rand --- */
 .card,.group,.tile,.pill,.search{position:relative}

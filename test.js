@@ -34,8 +34,16 @@ function welt(props) {
     ['', '', '', '', '', '', 'Von Hand', '0171 4444444', 'Offen', '', ''],
   ]);
   const heim = blatt([['Link'], ['https://docs.google.com/spreadsheets/d/' + A + '/edit?usp=sharing', ''], ['https://docs.google.com/spreadsheets/d/' + KAPUTT + '/edit', 'Alt']]);
-  const feedback = [], cache = {};
+  const feedback = [], cache = {}, pushes = [], drive = { ordner: [], geaendert: 1, weg: [] };
   let claudeBody = null;
+  const ordner = (name) => {
+    const o = { id: 'O' + drive.ordner.length, name, dateien: [], freigabe: null, getId: () => o.id, getUrl: () => 'https://drive/' + o.id,
+      createFolder: (n) => ordner(n), setSharing: (a, b) => { o.freigabe = a + '/' + b; },
+      createFile: (blob) => { o.dateien.push(blob); },
+      getFiles: () => { let i = 0; return { hasNext: () => i < o.dateien.length, next: () => { const b = o.dateien[i++]; return { getName: () => b.name, getUrl: () => 'https://datei/' + b.name, getThumbnail: () => ({ getContentType: () => 'image/png', getBytes: () => [1, 2, 3] }) }; } }; } };
+    drive.ordner.push(o);
+    return o;
+  };
   const ctx = {
     console, JSON, Date, Object, String, Number, Array, Math, isNaN, Set,
     SpreadsheetApp: {
@@ -51,15 +59,26 @@ function welt(props) {
         return { getSheets: () => [blatt([['Nur ein Hinweis']]), lead], getName: () => 'Leads November 2026', getUrl: () => 'https://a' }; // ohne Zeitzone, wie die echte Tabelle
       },
     },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] ?? null, setProperty: (k, v) => { props[k] = v; }, setProperties: (o) => Object.assign(props, o) }) },
+    DriveApp: {
+      Access: { ANYONE_WITH_LINK: 'jeder' }, Permission: { VIEW: 'ansehen' },
+      getFileById: () => ({ getLastUpdated: () => new Date(drive.geaendert) }),
+      createFolder: (n) => ordner(n), getFolderById: (id) => drive.ordner.find((o) => o.id === id), getRootFolder: () => ({}),
+    },
     CacheService: { getScriptCache: () => ({ get: (k) => cache[k], put: (k, v) => { cache[k] = v; } }) },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     Utilities: {
       getUuid: () => 'abcdef12-0000',
+      newBlob: (bytes, typ, name) => ({ bytes, typ, name }),
+      base64Decode: (t) => Array.from(Buffer.from(t, 'base64')), base64Encode: (b) => Buffer.from(b).toString('base64'),
       formatDate: (d, tz, f) => f === 'dd.MM.yy HH:mm' ? '20.11.26 14:03' : f.startsWith('yyyy') ? d.toISOString().slice(0, 19) : 'Freitag',
     },
     ContentService: { createTextOutput: (t) => ({ t, setMimeType() { return this; } }), MimeType: { JSON: 'json' } },
     UrlFetchApp: { fetch: (url, o) => {
+      if (url.includes('workers.dev')) {
+        pushes.push({ url, headers: o.headers, body: JSON.parse(o.payload) });
+        return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ weg: drive.weg }) };
+      }
       claudeBody = { url, headers: o.headers, body: JSON.parse(o.payload) };
       const antwort = { stichpunkte: ['Will Komplettpaket', 'Ruft\n\nnach Rücksprache zurück'], naechster_schritt: 'Freitag zurückrufen', status: 'Zurückrufen', naechster_kontakt: '2026-11-27' };
       return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: JSON.stringify(antwort) }] }) };
@@ -68,10 +87,10 @@ function welt(props) {
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(__dirname + '/apps-script/vertrieb.gs', 'utf8'), ctx);
   const post = (d) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(d) } }).t);
-  return { post, lead: lead.rows, heim: heim.rows, feedback, cache, claude: () => claudeBody };
+  return { post, ctx, props, pushes, drive, aendern: () => drive.geaendert++, lead: lead.rows, heim: heim.rows, feedback, cache, claude: () => claudeBody };
 }
 
-const w = welt({ TEAM_PASSWORT: 'geheim', ANTHROPIC_API_KEY: 'sk-ant-api-test' });
+const w = welt({ TEAM_PASSWORT: 'geheim', ANTHROPIC_API_KEY: 'sk-ant-api-test', PUSH_GEHEIMNIS: 'push-geheim' });
 const pw = 'geheim', anna = A + '~l:1', ben = A + '~l:2';
 
 // Falsches Passwort wird abgelehnt und gezählt
@@ -143,6 +162,53 @@ assert.strictEqual(w.feedback.at(-1).slice(1).join('|'), 'David|Idee|Mehr Gold')
 const ohne = welt({ TEAM_PASSWORT: 'x' });
 ohne.post({ aktion: 'speichern', pw: 'x', id: anna, notiz: 'hallo' });
 assert.match(ohne.post({ aktion: 'ki', pw: 'x', id: anna }).fehler, /noch nicht eingerichtet/);
+
+// Benachrichtigungen: nur echte Push-Dienste, ein Gerät nur einmal
+const abo = { endpoint: 'https://web.push.apple.com/abc', keys: { p256dh: 'P', auth: 'A' } };
+assert.strictEqual(w.post({ aktion: 'push', pw, abo: { ...abo, endpoint: 'https://boese.example/x' } }).code, 'push');
+assert.ok(w.post({ aktion: 'push', pw, wer: 'David', abo }).ok);
+assert.ok(w.post({ aktion: 'push', pw, wer: 'David', abo }).ok);
+assert.strictEqual(JSON.parse(w.props.PUSH_ABOS).length, 1);
+
+// Neue Leads: erster Lauf merkt nur, danach wird jeder neue Lead genau einmal gemeldet
+w.ctx.meldeNeueLeads();
+assert.strictEqual(w.pushes.length, 0);
+w.lead.push(['l:5', new Date().toISOString(), 'Referenzautos', 'ig', 'aufbereitung', 'BMW X5', 'Eva Neu', 'p:+491715555555', 'CREATED', '', '']);
+w.ctx.meldeNeueLeads();                       // Tabelle laut Drive unverändert: gar nicht erst gelesen
+assert.strictEqual(w.pushes.length, 0);
+w.aendern(); w.ctx.meldeNeueLeads();
+assert.strictEqual(w.pushes.length, 1);
+assert.strictEqual(w.pushes[0].headers.Authorization, 'Bearer push-geheim');
+assert.strictEqual(w.pushes[0].body.title, '🔔 Neuer Lead: Eva Neu');
+assert.strictEqual(w.pushes[0].body.body, 'Aufbereitung · BMW X5');
+assert.match(w.pushes[0].body.url, /#lead=TABELLE_A_123456789012345~l%3A5$/);
+w.aendern(); w.ctx.meldeNeueLeads();
+assert.strictEqual(w.pushes.length, 1);
+
+// Morgens fällige Leads; abgemeldete Geräte fliegen raus, ohne Geräte wird nichts mehr geschickt
+const ben5 = w.lead.find((z) => z[6] === 'Ben Neu');
+ben5[8] = 'Zurückrufen'; ben5[10] = new Date('2026-01-01T12:00:00Z');
+w.drive.weg = [abo.endpoint];
+w.ctx.meldeFaellige();
+assert.match(w.pushes[1].body.title, /^☎️ Heute fällig: \d+$/);
+assert.match(w.pushes[1].body.body, /Ben Neu/);
+assert.strictEqual(w.props.PUSH_ABOS, '[]');
+w.ctx.meldeFaellige();
+assert.strictEqual(w.pushes.length, 2);
+
+// Fotos: nur Bilder, ein Ordner pro Lead mit Namen und Auto, Vorschau, Ordner per Link sichtbar
+assert.strictEqual(JSON.stringify(w.post({ aktion: 'fotos', pw, id: anna })), '{"ok":true,"fotos":[],"ordner":""}');
+assert.strictEqual(w.post({ aktion: 'foto', pw, id: anna, typ: 'text/html', daten: 'eA==' }).code, 'foto');
+assert.ok(w.post({ aktion: 'foto', pw, id: anna, typ: 'image/jpeg', nr: 1, daten: Buffer.from('bild-1').toString('base64') }).ok);
+assert.ok(w.post({ aktion: 'foto', pw, id: anna, typ: 'image/jpeg', nr: 2, daten: Buffer.from('bild-2').toString('base64') }).ok);
+assert.strictEqual(w.drive.ordner.map((o) => o.name).join('|'), 'JD Vertrieb Fotos|Anna Alt, Audi A6');
+assert.strictEqual(Buffer.from(w.drive.ordner[1].dateien[0].bytes).toString(), 'bild-1');   // unverändert, volle Auflösung
+r = w.post({ aktion: 'fotos', pw, id: anna });
+assert.strictEqual(r.fotos.length, 2);
+assert.match(r.fotos[1].name, / 2\.jpg$/);
+assert.strictEqual(r.fotos[0].bild, 'data:image/png;base64,AQID');
+assert.strictEqual(r.ordner, 'https://drive/O1');
+assert.strictEqual(w.drive.ordner[1].freigabe, 'jeder/ansehen');    // Link an den Kunden funktioniert
 
 // Sperre nach 10 Fehlversuchen
 for (let i = 0; i < 10; i++) w.post({ aktion: 'liste', pw: 'falsch' });

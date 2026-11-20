@@ -19,11 +19,25 @@ Alles im Google-Konto, dem die Lead-Tabellen gehören.
 3. **Passwort und Schlüssel hinterlegen:** Links Zahnrad *Projekteinstellungen* → ganz unten *Skripteigenschaften* → *Skripteigenschaft hinzufügen*:
    - `TEAM_PASSWORT` = ein Passwort, das ihr euch ausdenkt (damit meldet ihr euch in der App an)
    - `ANTHROPIC_API_KEY` = euer Claude-Schlüssel (beginnt mit `sk-ant-api`, zu finden unter console.anthropic.com → API Keys)
+   - `PUSH_GEHEIMNIS` = das Geheimnis des Push-Dienstes (steht lokal in `push/.geheimnis`, siehe unten)
 4. **Als Web-App bereitstellen:** Oben rechts *Bereitstellen → Neue Bereitstellung*. Beim Zahnrad *Typ auswählen* → **Web-App**. *Ausführen als:* **Ich**, *Zugriff:* **Jeder**. Auf *Bereitstellen*, Zugriff erlauben (Google fragt nach Tabellen und externen Verbindungen). Die **Web-App-URL** kopieren (endet auf `/exec`).
 5. **URL eintragen:** Die URL in `config.js` bei `window.JD_API` eintragen und hochladen (oder einfach an Claude schicken). Die URL ist kein Geheimnis, ohne Passwort liefert sie nichts.
 6. **App öffnen:** Link der App auf dem Handy öffnen, Name und Team-Passwort eingeben, dann *Setup → Auf den Startbildschirm*.
 
 **Test:** Die Web-App-URL im Browser öffnen. Steht dort „JD Vertrieb Schnittstelle läuft.“, ist alles bereit.
+
+Danach im Apps Script oben die Funktion **vertriebEinrichten** wählen und **Ausführen**. Sie fragt die Berechtigungen ab (Drive für die Fotos) und legt die Zeitauslöser für die Benachrichtigungen an.
+
+## Benachrichtigungen
+
+- Jede Minute schaut das Skript, ob sich eine Lead-Tabelle geändert hat, und meldet neue Leads aufs Handy. Ein Tipp auf die Nachricht öffnet den Lead.
+- Morgens gegen 8 Uhr kommt eine Nachricht mit allen Leads, bei denen heute ein Rückruf oder Termin fällig ist.
+- Einschalten pro Handy: App auf den Startbildschirm, dann *Setup → Benachrichtigungen*. Auf dem iPhone geht das nur in der installierten App (ab iOS 16.4).
+- Versendet wird über einen kleinen, kostenlosen Dienst bei Cloudflare (`push/worker.js`, wie bei Dayliner). Er merkt sich nichts, das Skript schickt die Geräte mit. Neu hochladen: im Ordner `push` `npx wrangler deploy`. Geheimnisse dort: `VAPID_PRIVATE` (aus `push/.vapid-private`) und `GEHEIMNIS` (aus `push/.geheimnis`, dasselbe wie `PUSH_GEHEIMNIS` im Skript). Beide Dateien liegen nur lokal.
+
+## Fotos
+
+Beim Lead unter *Fotos* lassen sich Bilder in voller Auflösung hochladen, eins nach dem anderen. Sie landen in Google Drive im Ordner **JD Vertrieb Fotos**, pro Kunde ein Unterordner mit Name und Auto. Der Unterordner ist für jeden mit dem Link sichtbar, damit *An Kunden* den Link direkt per WhatsApp verschicken kann. Der kostenlose Google-Speicher (15 GB) reicht für grob 100 Autos mit je 30 Fotos.
 
 ## Neue Kampagne, neue Tabelle
 

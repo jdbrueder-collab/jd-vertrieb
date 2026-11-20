@@ -10,6 +10,10 @@
  * Skripteigenschaften (Projekteinstellungen > Skripteigenschaften):
  *   TEAM_PASSWORT      Passwort, mit dem sich das Team in der App anmeldet
  *   ANTHROPIC_API_KEY  Claude-Schlüssel für die KI-Zusammenfassung (beginnt mit sk-ant-api)
+ *   PUSH_GEHEIMNIS     Geheimnis für den Push-Dienst (push/worker.js), gleich wie GEHEIMNIS bei Cloudflare
+ *
+ * Nach dem Einfügen einmal die Funktion vertriebEinrichten ausführen: Sie fragt die Berechtigungen ab
+ * (Drive für Fotos) und legt die Zeitauslöser für die Benachrichtigungen an.
  *
  * Bereitstellen: Bereitstellen > Neue Bereitstellung > Web-App,
  *   Ausführen als: Ich, Zugriff: Jeder. Die URL kommt in config.js der App.
@@ -19,6 +23,11 @@ const TECHNIK = ['id', 'created_time', 'ad_id', 'ad_name', 'adset_id', 'adset_na
   'form_id', 'form_name', 'is_organic', 'platform', 'full_name', 'phone_number', 'lead_status', 'Notiz', 'Notizen', 'Termin'];
 const MUELL = new Set(TECHNIK.concat(['CREATED', 'email'])); // was Meta beim Eintragen in falsche Zellen schreibt
 const KI_EINTRAG = /^\d\d\.\d\d\.\d\d \d\d:\d\d KI: /;
+const AKTIV = ['Neu', 'Offen', 'Nicht erreicht', 'Zurückrufen', 'Terminiert']; // wie in der App
+const APP_URL = 'https://jdbrueder-collab.github.io/jd-vertrieb/';
+const PUSH_URL = 'https://jd-vertrieb-push.stempeluhr.workers.dev/send';
+const props = () => PropertiesService.getScriptProperties();
+const berlin = (d, f) => Utilities.formatDate(d, 'Europe/Berlin', f);
 
 function doGet() {
   return ContentService.createTextOutput('JD Vertrieb Schnittstelle läuft.');
@@ -29,7 +38,7 @@ function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
     pruefe(d.pw);
-    const aktion = { liste, speichern, ki, feedback }[d.aktion];
+    const aktion = { liste, speichern, ki, feedback, push: pushAn, foto, fotos }[d.aktion];
     if (!aktion) throw fehler('aktion', 'Unbekannte Aktion.');
     out = Object.assign({ ok: true }, aktion(d));
   } catch (err) {
@@ -287,4 +296,117 @@ function feedback(d) {
   if (!sh) { sh = ss.insertSheet('Feedback', ss.getSheets().length); sh.appendRow(['Datum', 'Wer', 'Art', 'Text']); }
   sh.appendRow([new Date(), String(d.wer || ''), String(d.art || ''), text]);
   return {};
+}
+
+// ---------- Benachrichtigungen ----------
+// Einmal im Editor ausführen: fragt die Berechtigungen ab und legt die Zeitauslöser an.
+function vertriebEinrichten() {
+  ScriptApp.getProjectTriggers().filter((t) => ['meldeNeueLeads', 'meldeFaellige'].includes(t.getHandlerFunction()))
+    .forEach((t) => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('meldeNeueLeads').timeBased().everyMinutes(1).create();
+  ScriptApp.newTrigger('meldeFaellige').timeBased().atHour(8).nearMinute(0).everyDays(1).inTimezone('Europe/Berlin').create();
+  DriveApp.getRootFolder(); // damit Google die Drive-Berechtigung für die Fotos gleich mit abfragt
+  meldeNeueLeads();
+}
+
+// Gerät für Benachrichtigungen anmelden (Push-Abo aus dem Browser).
+// shortcut: Abos liegen in einer Skripteigenschaft (max. 9 KB, reicht für etwa 15 Geräte), bei mehr in einen Reiter umziehen.
+function pushAn(d) {
+  const a = d.abo || {}, k = a.keys || {};
+  if (!/^https:\/\/[\w.-]+\.(push\.apple\.com|googleapis\.com|mozilla\.com|windows\.com)\//.test(a.endpoint) || !k.p256dh || !k.auth) throw fehler('push', 'Dieses Gerät kann keine Benachrichtigungen empfangen.');
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const abos = JSON.parse(props().getProperty('PUSH_ABOS') || '[]').filter((x) => x.endpoint !== a.endpoint);
+    abos.push({ endpoint: a.endpoint, keys: { p256dh: String(k.p256dh), auth: String(k.auth) }, wer: String(d.wer || '') });
+    props().setProperty('PUSH_ABOS', JSON.stringify(abos));
+  } finally {
+    lock.releaseLock();
+  }
+  return {};
+}
+
+function sende(title, body, url) {
+  const abos = JSON.parse(props().getProperty('PUSH_ABOS') || '[]');
+  const geheim = props().getProperty('PUSH_GEHEIMNIS');
+  if (!abos.length || !geheim) return;
+  const res = UrlFetchApp.fetch(PUSH_URL, {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { Authorization: 'Bearer ' + geheim }, payload: JSON.stringify({ abos, title, body, url }),
+  });
+  if (res.getResponseCode() !== 200) throw new Error('Push-Dienst antwortet mit ' + res.getResponseCode());
+  const weg = JSON.parse(res.getContentText()).weg || [];
+  if (weg.length) props().setProperty('PUSH_ABOS', JSON.stringify(JSON.parse(props().getProperty('PUSH_ABOS') || '[]').filter((x) => !weg.includes(x.endpoint))));
+}
+
+// Zeitauslöser jede Minute. Gelesen wird nur, wenn sich eine Lead-Tabelle geändert hat. Gemerkt werden die
+// ids der Leads der letzten zwei Tage, alles, was dort neu auftaucht, wird gemeldet.
+function meldeNeueLeads() {
+  const stand = verbunden().map((v) => { try { return DriveApp.getFileById(v.id).getLastUpdated().getTime(); } catch (e) { return 0; } }).join();
+  if (stand === props().getProperty('PUSH_STAND')) return;
+  const grenze = berlin(new Date(Date.now() - 2 * 864e5), "yyyy-MM-dd'T'HH:mm:ss");
+  const frisch = liste().leads.filter((l) => l.datum >= grenze);
+  const alt = props().getProperty('PUSH_BEKANNT');
+  props().setProperties({ PUSH_STAND: stand, PUSH_BEKANNT: JSON.stringify(frisch.map((l) => l.id.split('~')[1])) });
+  if (alt === null) return; // erster Lauf: nur merken
+  const neu = frisch.filter((l) => !JSON.parse(alt).includes(l.id.split('~')[1]));
+  if (neu.length === 1) sende('🔔 Neuer Lead: ' + (neu[0].name || 'ohne Namen'), neu[0].antworten.map((a) => a[1]).join(' · ') || neu[0].telefon,
+    APP_URL + '#lead=' + encodeURIComponent(neu[0].id));
+  else if (neu.length) sende('🔔 ' + neu.length + ' neue Leads', neu.map((l) => l.name || l.telefon).join(', '), APP_URL);
+}
+
+// Zeitauslöser morgens um 8: alle Leads, bei denen heute oder früher ein Rückruf oder Termin ansteht.
+function meldeFaellige() {
+  const heute = berlin(new Date(), 'yyyy-MM-dd');
+  const f = liste().leads.filter((l) => AKTIV.includes(l.status) && l.naechster && l.naechster <= heute);
+  if (f.length) sende('☎️ Heute fällig: ' + f.length, f.map((l) => l.name || l.telefon).join(', '), APP_URL);
+}
+
+// ---------- Fotos ----------
+// Pro Lead ein Ordner in „JD Vertrieb Fotos“ (in Drive des Skript-Kontos). Welcher Ordner zu welchem Lead gehört,
+// steht in den Skripteigenschaften (FOTOS_<Lead>), damit der Ordnername für den Kunden schön bleiben kann.
+// Der Ordner ist gleich für jeden mit dem Link sichtbar, damit der Link an den Kunden immer funktioniert.
+function fotoOrdner(appId, anlegen) {
+  const key = 'FOTOS_' + appId, id = props().getProperty(key);
+  if (id || !anlegen) return id ? DriveApp.getFolderById(id) : null;
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    if (props().getProperty(key)) return DriveApp.getFolderById(props().getProperty(key));
+    let wurzelId = props().getProperty('FOTOS_WURZEL');
+    if (!wurzelId) { wurzelId = DriveApp.createFolder('JD Vertrieb Fotos').getId(); props().setProperty('FOTOS_WURZEL', wurzelId); }
+    const { t, zeile } = finde(appId);
+    const l = leseZeile(t, zeile), auto = (l.antworten.find((a) => a[0] === 'Fahrzeug') || [])[1] || '';
+    const ordner = DriveApp.getFolderById(wurzelId).createFolder([l.name || 'Ohne Namen', auto.slice(0, 40)].filter(Boolean).join(', '));
+    try { ordner.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) { } // manche Konten verbieten das, Fotos gehen trotzdem
+    props().setProperty(key, ordner.getId());
+    return ordner;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Ein Foto in voller Auflösung ablegen (die App schickt eins nach dem anderen).
+function foto(d) {
+  const typ = String(d.typ || '');
+  if (!/^image\/(jpeg|png|heic|heif|webp)$/.test(typ) || !d.daten) throw fehler('foto', 'Das ist kein Foto.');
+  const ordner = fotoOrdner(d.id, true);
+  const name = berlin(new Date(), 'yyyy-MM-dd HH-mm-ss') + ' ' + (Number(d.nr) || 1) + '.' + typ.split('/')[1].replace('jpeg', 'jpg');
+  ordner.createFile(Utilities.newBlob(Utilities.base64Decode(String(d.daten)), typ, name));
+  return {};
+}
+
+// Fotos eines Leads mit kleinen Vorschaubildern für die App.
+function fotos(d) {
+  const ordner = fotoOrdner(d.id, false);
+  if (!ordner) return { fotos: [], ordner: '' };
+  const liste = [], it = ordner.getFiles();
+  while (it.hasNext()) {
+    const f = it.next();
+    let bild = '';
+    try { const b = f.getThumbnail(); if (b) bild = 'data:' + b.getContentType() + ';base64,' + Utilities.base64Encode(b.getBytes()); } catch (e) { }
+    liste.push({ name: f.getName(), url: f.getUrl(), bild });
+  }
+  liste.sort((a, b) => a.name.localeCompare(b.name));
+  return { fotos: liste, ordner: ordner.getUrl() };
 }

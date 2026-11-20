@@ -11,3 +11,17 @@ self.addEventListener('fetch', e => {
       .catch(() => caches.match(e.request))
   );
 });
+
+// Benachrichtigungen (neuer Lead, morgens fällige). Ein Tipp holt die App nach vorn und öffnet den Lead.
+self.addEventListener('push', e => {
+  let d = {}; try { d = e.data.json(); } catch { d = { body: e.data?.text() || '' }; }
+  e.waitUntil(self.registration.showNotification(d.title || 'JD Vertrieb', { body: d.body || '', icon: 'icon-192.png', badge: 'icon-192.png', data: { url: d.url || './' } }));
+});
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const url = new URL(e.notification.data?.url || './', self.registration.scope).href;
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+    if (list[0]) { list[0].postMessage({ open: url }); return list[0].focus(); }
+    return self.clients.openWindow(url);
+  }));
+});
