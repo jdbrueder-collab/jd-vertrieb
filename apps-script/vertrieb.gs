@@ -80,24 +80,25 @@ function oeffne(id) {
   if (k < 0) throw fehler('kopf', 'In „' + ss.getName() + '“ fehlt die Kopfzeile mit id und created_time.');
   const kopf = werte[k].map((h) => String(h).trim());
   const sp = (name) => kopf.indexOf(name);
-  return { id, ss, sheet, kopf, sp, k, werte, name: ss.getName(), notiz: kopf.find((h) => h === 'Notiz' || h === 'Notizen') };
+  const anzeige = sheet.getDataRange().getDisplayValues(); // so wie in der Tabelle zu sehen, für Datumswerte
+  return { id, ss, sheet, kopf, sp, k, werte, anzeige, name: ss.getName(), notiz: kopf.find((h) => h === 'Notiz' || h === 'Notizen') };
 }
 
 // Zeitpunkt als Text in deutscher Uhrzeit ohne Zeitzone, z. B. 2026-11-20T21:49:00.
-function zeit(x, t, nurTag) {
+// Datumszellen werden aus der Anzeige gelesen, weil die Lead-Tabellen keine Zeitzone eingestellt haben.
+// shortcut: nur Anzeige im Format dd.MM.yyyy (HH:mm) wird erkannt, bei anderem Zellformat hier erweitern.
+function zeit(x, anzeige, nurTag) {
   let s = '';
-  if (x instanceof Date) s = Utilities.formatDate(x, t.ss.getSpreadsheetTimeZone(), "yyyy-MM-dd'T'HH:mm:ss");
+  const m = String(anzeige).match(/^(\d\d)\.(\d\d)\.(\d{4})(?: (\d\d):(\d\d))?/);
+  if (m) s = m[3] + '-' + m[2] + '-' + m[1] + 'T' + (m[4] || '12') + ':' + (m[5] || '00') + ':00';
   else if (typeof x === 'number' && x > 0) s = new Date(Math.round((x - 25569) * 864e5)).toISOString().slice(0, 19); // Tabellen-Zahl
   else if (/^\d{4}-\d\d-\d\dT/.test(x) && !isNaN(new Date(x))) s = Utilities.formatDate(new Date(x), 'Europe/Berlin', "yyyy-MM-dd'T'HH:mm:ss");
-  else {
-    const m = String(x).match(/^(\d\d)\.(\d\d)\.(\d{4})(?: (\d\d):(\d\d))?/);
-    if (m) s = m[3] + '-' + m[2] + '-' + m[1] + 'T' + (m[4] || '12') + ':' + (m[5] || '00') + ':00';
-  }
   return nurTag ? s.slice(0, 10) : s;
 }
 
-function alsLead(t, z) {
+function alsLead(t, z, a) {
   const roh = (name) => (t.sp(name) < 0 ? '' : z[t.sp(name)]);
+  const zelle = (name) => [roh(name), t.sp(name) < 0 ? '' : a[t.sp(name)]];
   const text = (name) => { const v = String(roh(name)).trim(); return MUELL.has(v) ? '' : v; };
   const tel = text('phone_number').replace(/^p:/, '');
   let ziffern = tel.replace(/\D/g, '');
@@ -106,13 +107,13 @@ function alsLead(t, z) {
   const ki = eintraege.filter((e) => KI_EINTRAG.test(e)).pop() || '';
   const antworten = [];
   t.kopf.forEach((h, i) => {
-    const v = String(z[i] instanceof Date ? '' : z[i]).trim();
+    const v = String(a[i]).trim();
     if (h && !TECHNIK.includes(h) && v && !MUELL.has(v)) antworten.push([gross(h.replace(/_/g, ' ')), gross(v)]);
   });
   const status = text('lead_status');
   return {
     id: t.id + '~' + text('id'),
-    datum: zeit(roh('created_time'), t),
+    datum: zeit(...zelle('created_time')),
     name: text('full_name'),
     telefon: tel,
     wa: ziffern.length > 6 ? 'https://wa.me/' + ziffern : '',
@@ -121,7 +122,7 @@ function alsLead(t, z) {
     quelle: { ig: 'Instagram', fb: 'Facebook' }[text('platform')] || text('platform'),
     tabelle: t.name,
     status: STATUS.includes(status) ? status : 'Neu', // leer oder CREATED heißt: noch niemand hat sich gekümmert
-    naechster: zeit(roh('Termin'), t, true),
+    naechster: zeit(...zelle('Termin'), true),
     notizen: eintraege.filter((e) => !KI_EINTRAG.test(e)).join('\n\n'),
     ki: ki.replace(KI_EINTRAG, ''),
   };
@@ -132,7 +133,7 @@ function leadsAus(t) {
   const sp = t.sp('id');
   return t.werte.map((z, i) => {
     if (i === t.k) return null;
-    const l = alsLead(t, z);
+    const l = alsLead(t, z, t.anzeige[i]);
     if (!l.name && !l.telefon) return null;
     if (!String(z[sp]).trim()) {
       z[sp] = 'manuell-' + Utilities.getUuid().slice(0, 8);
@@ -173,6 +174,11 @@ function finde(appId) {
 }
 
 // Status, Termin und neue Notiz speichern. Notizen werden mit Zeit und Name angehängt, nie überschrieben.
+function leseZeile(t, nr) {
+  const r = t.sheet.getRange(nr, 1, 1, t.kopf.length);
+  return alsLead(t, r.getValues()[0], r.getDisplayValues()[0]);
+}
+
 function speichern(d) {
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
@@ -198,7 +204,7 @@ function speichern(d) {
       n.setValue((alt && !MUELL.has(alt) ? alt + '\n\n' : '') + jetzt() + ' ' + eintrag);
     }
     SpreadsheetApp.flush();
-    return { lead: alsLead(t, t.sheet.getRange(zeile, 1, 1, t.kopf.length).getValues()[0]) };
+    return { lead: leseZeile(t, zeile) };
   } finally {
     lock.releaseLock();
   }
@@ -207,7 +213,7 @@ function speichern(d) {
 // Claude fasst die Notizen zum Lead zusammen und schlägt Status und nächsten Kontakt vor.
 function ki(d) {
   const { t, zeile } = finde(d.id);
-  const l = alsLead(t, t.sheet.getRange(zeile, 1, 1, t.kopf.length).getValues()[0]);
+  const l = leseZeile(t, zeile);
   if (!l.notizen.trim()) throw fehler('leer', 'Es gibt noch keine Notizen zum Zusammenfassen.');
   const heute = Utilities.formatDate(new Date(), 'Europe/Berlin', 'EEEE, yyyy-MM-dd');
   const text = [

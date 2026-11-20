@@ -6,9 +6,14 @@ const A = 'TABELLE_A_123456789012345', KAPUTT = 'KAPUTT_12345678901234567';
 // Kleine Nachbildung einer Tabelle (Zeilen als Array, 1-basiert wie bei Google)
 function blatt(rows) {
   const breite = () => Math.max(...rows.map((z) => z.length));
+  const p2 = (n) => String(n).padStart(2, '0');
+  // Anzeige wie in Sheets: Datum als dd.MM.yyyy HH:mm, Zahl mit Komma
+  const zeige = (x) => x instanceof Date ? `${p2(x.getUTCDate())}.${p2(x.getUTCMonth() + 1)}.${x.getUTCFullYear()} ${p2(x.getUTCHours())}:${p2(x.getUTCMinutes())}`
+    : typeof x === 'number' ? String(x).replace('.', ',') : String(x);
   const range = (r, c, nr = 1, nc = 1) => ({
     getValues: () => Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => (rows[r - 1 + i] || [])[c - 1 + j] ?? '')),
     getValue: () => (rows[r - 1] || [])[c - 1] ?? '',
+    getDisplayValues: () => Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => zeige((rows[r - 1 + i] || [])[c - 1 + j] ?? ''))),
     setValue: (x) => { (rows[r - 1] ||= [])[c - 1] = x; },
     createTextFinder: (text) => ({
       matchEntireCell() { return this; },
@@ -43,7 +48,7 @@ function welt(props) {
       }),
       openById: (id) => {
         if (id !== A) throw new Error('Datei nicht gefunden');
-        return { getSheets: () => [blatt([['Nur ein Hinweis']]), lead], getName: () => 'Leads November 2026', getUrl: () => 'https://a', getSpreadsheetTimeZone: () => 'Europe/Berlin' };
+        return { getSheets: () => [blatt([['Nur ein Hinweis']]), lead], getName: () => 'Leads November 2026', getUrl: () => 'https://a' }; // ohne Zeitzone, wie die echte Tabelle
       },
     },
     PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] }) },
@@ -89,6 +94,7 @@ assert.strictEqual(a.quelle, 'Instagram');
 assert.strictEqual(JSON.stringify(a.antworten), '[["Interesse","Referenzauto"],["Fahrzeug","Audi A6"]]');
 assert.strictEqual(r.leads[1].datum, new Date(Math.round(20777.5 * 864e5)).toISOString().slice(0, 19)); // Tabellen-Zahl
 assert.strictEqual(r.leads[3].status, 'Offen');
+assert.strictEqual(a.datum, '2026-11-19T09:00:00');        // aus der Anzeige, ohne Zeitzone der Tabelle
 assert.match(w.lead[4][0], /^manuell-abcdef12$/);         // von Hand eingetragener Lead bekommt eine id
 assert.strictEqual(w.heim[1][1], 'Leads November 2026');  // Name landet in Spalte B
 assert.strictEqual(r.tabellen[0].anzahl, 4);
