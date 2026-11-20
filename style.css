@@ -1,6 +1,6 @@
 /* JD Vertrieb: Design aus Dayliner übernommen (Glas, Tab-Leiste, Bottom-Sheets), Farben auf JD Brüder umgestellt (Schwarz und Gold). */
 :root{--txt:#f3efe6;--mut:rgba(243,239,230,.58);--card:rgba(10,8,5,.5);--line:rgba(255,255,255,.08);
-  --accent:#b49759;--on-accent:#14100a;--ok:#8cc63f;--near:#f0a03c;--minus:#e8667e;--blue:#5aa9ff;--teal:#3fd0b0;
+  --accent:#b49759;--on-accent:#14100a;--ok:#8cc63f;--near:#f0a03c;--minus:#e8667e;--blue:#5aa9ff;--teal:#3fd0b0;--pink:#ef8fb6;
   --bg:#0d0b08;--bgimg:radial-gradient(90% 45% at 65% 5%,#5a4622 0,rgba(90,70,34,0) 70%),radial-gradient(70% 40% at 5% 45%,#33281a 0,rgba(51,40,26,0) 70%),radial-gradient(80% 45% at 95% 78%,#3d3016 0,rgba(61,48,22,0) 70%);
   --r-lg:24px;--r-sm:16px;--pad:16px;--gap:12px;--gap-s:8px;--gap-l:20px;color-scheme:dark}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}

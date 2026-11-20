@@ -1,6 +1,10 @@
 /**
- * JD Vertrieb: Schnittstelle zwischen der App und dem Sheet "JD Brüder Leads".
- * Liegt als zweite Datei im selben Apps-Script-Projekt wie leads-google-sheet.gs.
+ * JD Vertrieb: Schnittstelle zwischen der App und den Lead-Tabellen von Meta.
+ * Liegt in einer eigenen Google-Tabelle "JD Vertrieb". In deren erstem Reiter steht in Spalte A
+ * je Zeile der Link zu einer Lead-Tabelle (eine pro Kampagne). Spalte B füllt das Skript mit dem Namen.
+ *
+ * Die Lead-Tabellen bleiben, wie Meta und das Sortier-Skript sie anlegen. Die App schreibt nur in
+ * lead_status, Notiz und Termin. Die KI-Zusammenfassung wird als Eintrag an die Notiz angehängt.
  *
  * Skripteigenschaften (Projekteinstellungen > Skripteigenschaften):
  *   TEAM_PASSWORT      Passwort, mit dem sich das Team in der App anmeldet
@@ -9,13 +13,11 @@
  * Bereitstellen: Bereitstellen > Neue Bereitstellung > Web-App,
  *   Ausführen als: Ich, Zugriff: Jeder. Die URL kommt in config.js der App.
  */
-const STATUS = ['Neu', 'Nicht erreicht', 'Rückruf', 'Termin', 'Kunde', 'Kein Interesse'];
-const ZUSATZ = ['Notizen', 'KI-Zusammenfassung', 'Nächster Kontakt', 'Zuletzt bearbeitet'];
-const FELD = { // Spaltenname im Sheet → Feld in der App
-  'Lead-ID': 'id', 'Datum': 'datum', 'Name': 'name', 'Telefon': 'telefon', 'Interesse': 'interesse',
-  'Fahrzeug': 'fahrzeug', 'Anzeige': 'anzeige', 'WhatsApp-Link': 'wa', 'Status': 'status',
-  'Notizen': 'notizen', 'KI-Zusammenfassung': 'ki', 'Nächster Kontakt': 'naechster', 'Zuletzt bearbeitet': 'bearbeitet',
-};
+const STATUS = ['Offen', 'Zurückrufen', 'Terminiert', 'Nicht erreicht', 'Unqualifiziert', 'Auftrag']; // wie das Dropdown in lead_status
+const TECHNIK = ['id', 'created_time', 'ad_id', 'ad_name', 'adset_id', 'adset_name', 'campaign_id', 'campaign_name',
+  'form_id', 'form_name', 'is_organic', 'platform', 'full_name', 'phone_number', 'lead_status', 'Notiz', 'Notizen', 'Termin'];
+const MUELL = new Set(TECHNIK.concat(['CREATED', 'email'])); // was Meta beim Eintragen in falsche Zellen schreibt
+const KI_EINTRAG = /^\d\d\.\d\d\.\d\d \d\d:\d\d KI: /;
 
 function doGet() {
   return ContentService.createTextOutput('JD Vertrieb Schnittstelle läuft.');
@@ -36,8 +38,8 @@ function doPost(e) {
 }
 
 const fehler = (code, text) => Object.assign(new Error(text), { code });
-const tz = () => Session.getScriptTimeZone();
-const jetzt = () => Utilities.formatDate(new Date(), tz(), 'dd.MM.yy HH:mm');
+const jetzt = () => Utilities.formatDate(new Date(), 'Europe/Berlin', 'dd.MM.yy HH:mm');
+const gross = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 // Nach 10 falschen Passwörtern ist 10 Minuten Pause, damit niemand durchprobieren kann.
 function pruefe(pw) {
@@ -49,88 +51,160 @@ function pruefe(pw) {
   if (pw !== soll) { cache.put('fehlversuche', String(fehl + 1), 600); throw fehler('pw', 'Falsches Passwort.'); }
 }
 
-// Tabelle lesen. Fehlende Zusatzspalten und Lead-IDs (z. B. von Hand eingetragene Leads) werden ergänzt.
-function tabelle() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
-  let kopf = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String);
-  const fehlt = ZUSATZ.filter((s) => !kopf.includes(s));
-  if (fehlt.length) {
-    sheet.getRange(1, kopf.length + 1, 1, fehlt.length).setValues([fehlt]);
-    kopf = kopf.concat(fehlt);
-  }
-  const werte = sheet.getLastRow() > 1 ? sheet.getRange(2, 1, sheet.getLastRow() - 1, kopf.length).getValues() : [];
-  const sp = (name) => kopf.indexOf(name);
-  werte.forEach((z, i) => {
-    if (sp('Lead-ID') < 0 || z[sp('Lead-ID')] || !(z[sp('Name')] || z[sp('Telefon')])) return;
-    z[sp('Lead-ID')] = 'manuell-' + Utilities.getUuid().slice(0, 8);
-    sheet.getRange(i + 2, sp('Lead-ID') + 1).setValue(z[sp('Lead-ID')]);
-  });
-  return { sheet, kopf, werte, sp };
+// Verbundene Lead-Tabellen: erster Reiter dieser Tabelle, Spalte A = Link, Spalte B = Name.
+function verbunden() {
+  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+  if (!sh.getLastRow()) return [];
+  return sh.getRange(1, 1, sh.getLastRow(), 2).getValues().map((z, i) => {
+    const m = String(z[0]).match(/\/d\/([\w-]{20,})/) || String(z[0]).trim().match(/^([\w-]{20,})$/);
+    return m && { id: m[1], name: String(z[1]), namensZelle: sh.getRange(i + 1, 2) };
+  }).filter(Boolean);
 }
 
-function alsLead(kopf, z) {
-  const l = {};
-  kopf.forEach((name, i) => {
-    const f = FELD[name]; if (!f) return;
-    let v = z[i];
-    if (v instanceof Date) v = f === 'naechster' ? Utilities.formatDate(v, tz(), 'yyyy-MM-dd') : v.toISOString();
-    l[f] = String(v === null || v === undefined ? '' : v);
+// Eine Lead-Tabelle lesen. Meta schiebt neue Leads über die Kopfzeile, bis das Sortier-Skript sie
+// wieder nach oben holt. Deshalb wird die Kopfzeile gesucht und jede andere Zeile ist ein Lead.
+function oeffne(id) {
+  const ss = SpreadsheetApp.openById(id);
+  const sheet = ss.getSheets()[0];
+  const werte = sheet.getDataRange().getValues();
+  const k = werte.findIndex((z) => z.includes('id') && z.includes('created_time'));
+  if (k < 0) throw fehler('kopf', 'In „' + ss.getName() + '“ fehlt die Kopfzeile mit id und created_time.');
+  const kopf = werte[k].map((h) => String(h).trim());
+  const sp = (name) => kopf.indexOf(name);
+  return { id, ss, sheet, kopf, sp, k, werte, name: ss.getName(), notiz: kopf.find((h) => h === 'Notiz' || h === 'Notizen') };
+}
+
+// Zeitpunkt als Text in deutscher Uhrzeit ohne Zeitzone, z. B. 2026-11-20T21:49:00.
+function zeit(x, t, nurTag) {
+  let s = '';
+  if (x instanceof Date) s = Utilities.formatDate(x, t.ss.getSpreadsheetTimeZone(), "yyyy-MM-dd'T'HH:mm:ss");
+  else if (typeof x === 'number' && x > 0) s = new Date(Math.round((x - 25569) * 864e5)).toISOString().slice(0, 19); // Tabellen-Zahl
+  else if (/^\d{4}-\d\d-\d\dT/.test(x) && !isNaN(new Date(x))) s = Utilities.formatDate(new Date(x), 'Europe/Berlin', "yyyy-MM-dd'T'HH:mm:ss");
+  else {
+    const m = String(x).match(/^(\d\d)\.(\d\d)\.(\d{4})(?: (\d\d):(\d\d))?/);
+    if (m) s = m[3] + '-' + m[2] + '-' + m[1] + 'T' + (m[4] || '12') + ':' + (m[5] || '00') + ':00';
+  }
+  return nurTag ? s.slice(0, 10) : s;
+}
+
+function alsLead(t, z) {
+  const roh = (name) => (t.sp(name) < 0 ? '' : z[t.sp(name)]);
+  const text = (name) => { const v = String(roh(name)).trim(); return MUELL.has(v) ? '' : v; };
+  const tel = text('phone_number').replace(/^p:/, '');
+  let ziffern = tel.replace(/\D/g, '');
+  if (!tel.startsWith('+')) ziffern = ziffern.replace(/^00/, '').replace(/^0/, '49');
+  const eintraege = (t.notiz ? text(t.notiz) : '').split('\n\n').filter((e) => e.trim());
+  const ki = eintraege.filter((e) => KI_EINTRAG.test(e)).pop() || '';
+  const antworten = [];
+  t.kopf.forEach((h, i) => {
+    const v = String(z[i] instanceof Date ? '' : z[i]).trim();
+    if (h && !TECHNIK.includes(h) && v && !MUELL.has(v)) antworten.push([gross(h.replace(/_/g, ' ')), gross(v)]);
   });
-  if (!l.status) l.status = 'Neu';
-  return l;
+  const status = text('lead_status');
+  return {
+    id: t.id + '~' + text('id'),
+    datum: zeit(roh('created_time'), t),
+    name: text('full_name'),
+    telefon: tel,
+    wa: ziffern.length > 6 ? 'https://wa.me/' + ziffern : '',
+    antworten,
+    anzeige: text('ad_name'),
+    quelle: { ig: 'Instagram', fb: 'Facebook' }[text('platform')] || text('platform'),
+    tabelle: t.name,
+    status: STATUS.includes(status) ? status : 'Neu', // leer oder CREATED heißt: noch niemand hat sich gekümmert
+    naechster: zeit(roh('Termin'), t, true),
+    notizen: eintraege.filter((e) => !KI_EINTRAG.test(e)).join('\n\n'),
+    ki: ki.replace(KI_EINTRAG, ''),
+  };
+}
+
+// Alle Leads einer Tabelle. Von Hand eingetragene Leads ohne id bekommen eine.
+function leadsAus(t) {
+  const sp = t.sp('id');
+  return t.werte.map((z, i) => {
+    if (i === t.k) return null;
+    const l = alsLead(t, z);
+    if (!l.name && !l.telefon) return null;
+    if (!String(z[sp]).trim()) {
+      z[sp] = 'manuell-' + Utilities.getUuid().slice(0, 8);
+      t.sheet.getRange(i + 1, sp + 1).setValue(z[sp]);
+      l.id = t.id + '~' + z[sp];
+    }
+    return l;
+  }).filter(Boolean);
 }
 
 function liste() {
-  const t = tabelle();
-  const leads = t.werte.map((z) => alsLead(t.kopf, z)).filter((l) => l.id);
-  leads.sort((a, b) => String(b.datum).localeCompare(String(a.datum)));
-  return { leads, sheetUrl: SpreadsheetApp.getActiveSpreadsheet().getUrl() };
+  const leads = [], tabellen = [];
+  verbunden().forEach((v) => {
+    try {
+      const t = oeffne(v.id);
+      if (v.name !== t.name) v.namensZelle.setValue(t.name);
+      const ls = leadsAus(t);
+      leads.push.apply(leads, ls);
+      tabellen.push({ name: t.name, url: t.ss.getUrl(), anzahl: ls.length });
+    } catch (err) {
+      tabellen.push({ name: v.name || 'Tabelle ' + v.id.slice(0, 6), fehler: err.code === 'kopf' ? err.message
+        : 'Kein Zugriff (' + err.message + '). Stimmt der Link, und darf dieses Google-Konto die Tabelle bearbeiten?' });
+    }
+  });
+  leads.sort((a, b) => b.datum.localeCompare(a.datum));
+  return { leads, tabellen, heimUrl: SpreadsheetApp.getActiveSpreadsheet().getUrl() };
 }
 
-// Status, nächsten Kontakt und neue Notiz speichern. Notizen werden mit Zeit und Name angehängt, nie überschrieben.
+// Lead über seine id finden, frisch aus der Tabelle, weil Meta und das Sortier-Skript Zeilen verschieben.
+function finde(appId) {
+  const teil = String(appId || '').split('~');
+  if (teil.length !== 2 || !teil[1]) throw fehler('weg', 'Unbekannter Lead.');
+  const t = oeffne(teil[0]);
+  const zelle = t.sheet.getRange(1, t.sp('id') + 1, t.sheet.getLastRow(), 1)
+    .createTextFinder(teil[1]).matchEntireCell(true).findNext();
+  if (!zelle) throw fehler('weg', 'Diesen Lead gibt es in der Tabelle nicht mehr.');
+  return { t, zeile: zelle.getRow() };
+}
+
+// Status, Termin und neue Notiz speichern. Notizen werden mit Zeit und Name angehängt, nie überschrieben.
 function speichern(d) {
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
-    const t = tabelle();
-    const i = t.werte.findIndex((z) => String(z[t.sp('Lead-ID')]) === String(d.id));
-    if (i < 0) throw fehler('weg', 'Diesen Lead gibt es im Sheet nicht mehr.');
-    const z = t.werte[i];
-    const wer = String(d.wer || '').trim() || 'Team';
-    // Nur die geänderten Zellen schreiben, damit Formeln und Spalten, die die App nicht kennt, unberührt bleiben.
-    const setze = (spalte, wert) => { z[t.sp(spalte)] = wert; t.sheet.getRange(i + 2, t.sp(spalte) + 1).setValue(wert); };
+    const { t, zeile } = finde(d.id);
+    const zelle = (name) => {
+      if (!name || t.sp(name) < 0) throw fehler('spalte', 'In „' + t.name + '“ fehlt die Spalte ' + (name || 'Notiz') + '.');
+      return t.sheet.getRange(zeile, t.sp(name) + 1);
+    };
     if (d.status !== undefined) {
-      if (!STATUS.includes(d.status)) throw fehler('status', 'Unbekannter Status.');
-      setze('Status', d.status);
+      if (d.status !== 'Neu' && !STATUS.includes(d.status)) throw fehler('status', 'Unbekannter Status.');
+      zelle('lead_status').setValue(d.status === 'Neu' ? '' : d.status);
     }
     if (d.naechster !== undefined) {
       if (d.naechster && !/^\d{4}-\d{2}-\d{2}$/.test(d.naechster)) throw fehler('datum', 'Ungültiges Datum.');
-      setze('Nächster Kontakt', d.naechster ? new Date(d.naechster + 'T12:00:00') : '');
+      zelle('Termin').setValue(d.naechster ? new Date(d.naechster + 'T12:00:00') : '');
     }
-    if (d.ki !== undefined) setze('KI-Zusammenfassung', String(d.ki));
-    const notiz = String(d.notiz || '').trim();
-    if (notiz) {
-      const alt = String(z[t.sp('Notizen')] || '');
-      setze('Notizen', (alt ? alt + '\n\n' : '') + jetzt() + ' ' + wer + ': ' + notiz);
+    const wer = String(d.wer || '').trim() || 'Team';
+    const eintrag = d.ki ? 'KI: ' + d.ki : String(d.notiz || '').trim() && wer + ': ' + String(d.notiz).trim();
+    if (eintrag) {
+      const n = zelle(t.notiz);
+      const alt = String(n.getValue()).trim();
+      n.setValue((alt && !MUELL.has(alt) ? alt + '\n\n' : '') + jetzt() + ' ' + eintrag);
     }
-    setze('Zuletzt bearbeitet', jetzt() + ' ' + wer);
-    return { lead: alsLead(t.kopf, z) };
+    SpreadsheetApp.flush();
+    return { lead: alsLead(t, t.sheet.getRange(zeile, 1, 1, t.kopf.length).getValues()[0]) };
   } finally {
     lock.releaseLock();
   }
 }
 
-// Claude fasst alle Notizen zum Lead zusammen und schlägt Status und nächsten Kontakt vor.
+// Claude fasst die Notizen zum Lead zusammen und schlägt Status und nächsten Kontakt vor.
 function ki(d) {
-  const t = tabelle();
-  const z = t.werte.find((r) => String(r[t.sp('Lead-ID')]) === String(d.id));
-  if (!z) throw fehler('weg', 'Diesen Lead gibt es im Sheet nicht mehr.');
-  const l = alsLead(t.kopf, z);
+  const { t, zeile } = finde(d.id);
+  const l = alsLead(t, t.sheet.getRange(zeile, 1, 1, t.kopf.length).getValues()[0]);
   if (!l.notizen.trim()) throw fehler('leer', 'Es gibt noch keine Notizen zum Zusammenfassen.');
-  const heute = Utilities.formatDate(new Date(), tz(), "EEEE, yyyy-MM-dd");
+  const heute = Utilities.formatDate(new Date(), 'Europe/Berlin', 'EEEE, yyyy-MM-dd');
   const text = [
     'Heute ist ' + heute + '.',
-    'Lead: ' + l.name + ', Fahrzeug: ' + (l.fahrzeug || 'unbekannt') + ', Interesse laut Formular: ' + (l.interesse || 'unbekannt') + '.',
+    'Lead: ' + (l.name || 'ohne Namen') + '. Anzeige: ' + (l.anzeige || 'unbekannt') + '.',
+    'Angaben im Formular: ' + (l.antworten.map((a) => a[0] + ': ' + a[1]).join('; ') || 'keine') + '.',
     'Aktueller Status: ' + l.status + '.',
     '', 'Notizen aus den Telefonaten:', l.notizen,
   ].join('\n');
@@ -155,8 +229,7 @@ function ki(d) {
       additionalProperties: false,
     }
   );
-  const kiText = r.zusammenfassung + '\nNächster Schritt: ' + r.naechster_schritt;
-  const lead = speichern({ id: d.id, wer: d.wer, ki: kiText }).lead;
+  const lead = speichern({ id: d.id, ki: r.zusammenfassung + '\nNächster Schritt: ' + r.naechster_schritt }).lead;
   const datum = /^\d{4}-\d{2}-\d{2}$/.test(r.naechster_kontakt) ? r.naechster_kontakt : '';
   return { lead, vorschlag: { status: r.status, naechster: datum } };
 }
@@ -186,13 +259,13 @@ function claude(system, text, schema) {
   return JSON.parse(block.text);
 }
 
-// Feedback-Lampe: landet im Reiter "Feedback".
+// Feedback-Lampe: landet in dieser Tabelle im Reiter "Feedback".
 function feedback(d) {
   const text = String(d.text || '').trim();
   if (!text) throw fehler('leer', 'Schreib erst etwas.');
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sh = ss.getSheetByName('Feedback');
-  if (!sh) { sh = ss.insertSheet('Feedback'); sh.appendRow(['Datum', 'Wer', 'Art', 'Text']); }
+  if (!sh) { sh = ss.insertSheet('Feedback', ss.getSheets().length); sh.appendRow(['Datum', 'Wer', 'Art', 'Text']); }
   sh.appendRow([new Date(), String(d.wer || ''), String(d.art || ''), text]);
   return {};
 }

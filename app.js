@@ -1,8 +1,9 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '1';
-const STATUS = { 'Neu': 'var(--accent)', 'Nicht erreicht': 'var(--near)', 'Rückruf': 'var(--blue)', 'Termin': 'var(--teal)', 'Kunde': 'var(--ok)', 'Kein Interesse': 'rgba(255,255,255,.35)' };
-const OFFEN = ['Neu', 'Nicht erreicht', 'Rückruf', 'Termin'];
+const VERSION = '2';
+// Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
+const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'rgba(255,255,255,.35)' };
+const AKTIV = ['Neu', 'Offen', 'Nicht erreicht', 'Zurückrufen', 'Terminiert'];
 const WD = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
 const ICON = {
   phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 1.6 4.2 2 2 0 0 1 3.6 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L7.5 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.8 2z"/></svg>',
@@ -23,8 +24,8 @@ const lies = (k, f) => { try { return JSON.parse(localStorage.getItem(k)) ?? f; 
 const merke = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } };
 
 let konto = lies('jdv-konto', { name: '', pw: '' });
-let leads = [], sheetUrl = '', stand = null, laedt = false, fehlerText = '';
-let tab = 'anrufen', filter = 'Offen', suche = '';
+let leads = [], tabellen = [], heimUrl = '', stand = null, laedt = false, fehlerText = '';
+let tab = 'anrufen', filter = 'Aktiv', suche = '';
 let offen = null;            // Lead, der gerade im Sheet offen ist
 const vorschlag = {};        // KI-Vorschläge je Lead
 const angemeldet = () => DEMO || !!konto.pw;
@@ -39,6 +40,7 @@ async function api(aktion, daten = {}) {
   if (!j.ok) throw Object.assign(new Error(j.fehler || 'Fehler'), { code: j.code });
   return j;
 }
+function uebernimm(j) { leads = j.leads; tabellen = j.tabellen || []; heimUrl = j.heimUrl || ''; stand = new Date(); }
 async function laden(still) {
   if (!angemeldet() || laedt) return;
   laedt = true; $('.roundbtn')?.classList.add('spin');
@@ -47,7 +49,7 @@ async function laden(still) {
     const vorher = new Set(leads.map(l => l.id));
     const neu = j.leads.filter(l => !vorher.has(l.id));
     if (stand && neu.length) { toast(neu.length === 1 ? `🔔 Neuer Lead: ${neu[0].name}` : `🔔 ${neu.length} neue Leads`); haptic(); }
-    leads = j.leads; sheetUrl = j.sheetUrl || ''; stand = new Date(); fehlerText = '';
+    uebernimm(j); fehlerText = '';
   } catch (e) {
     if (e.code === 'pw') return abmelden(e.message);
     fehlerText = e.message; if (!still) toast(e.message);
@@ -73,11 +75,11 @@ function render() {
 function go(t) { tab = t; render(); view.scrollTop = 0; }
 
 // ---------- Hilfen für Leads ----------
-const faellig = l => OFFEN.includes(l.status) && l.naechster && l.naechster <= heute();
+const faellig = l => AKTIV.includes(l.status) && l.naechster && l.naechster <= heute();
 const telLink = l => 'tel:' + String(l.telefon).replace(/[^\d+]/g, '');
 const datumKurz = s => { const d = new Date(s + 'T12:00'); return `${WD[d.getDay()]} ${pad(d.getDate())}.${pad(d.getMonth() + 1)}.`; };
 function wann(l) {
-  if (OFFEN.includes(l.status) && l.naechster) {
+  if (AKTIV.includes(l.status) && l.naechster) {
     const h = heute();
     if (l.naechster < h) return `<span class="when due">seit ${datumKurz(l.naechster).slice(3)}</span>`;
     if (l.naechster === h) return '<span class="when due">Heute</span>';
@@ -95,7 +97,7 @@ function relativ(iso) {
   return min < 6 * 1440 ? datumKurz(ymd(d)) : `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.`;
 }
 function leadZeile(l) {
-  const info = [l.fahrzeug, l.interesse].filter(Boolean).join(' · ') || l.telefon;
+  const info = l.antworten.map(a => a[1]).join(' · ') || l.telefon;
   return `<div class="lead">
     <button class="open" onclick="openLead(${js(l.id)})"><span class="dot" style="--c:${STATUS[l.status] || STATUS.Neu}"></span>
       <span class="tt"><b>${esc(l.name || 'Ohne Namen')}</b><span>${esc(info)}</span></span>${wann(l)}</button>
@@ -105,40 +107,41 @@ function leadZeile(l) {
 const block = (titel, liste) => liste.length ? `<div class="label">${titel}</div><div class="group">${liste.map(leadZeile).join('')}</div>` : '';
 function kopf(titel) {
   return `<div class="phead"><h1>${titel}</h1><button class="roundbtn pill ${laedt ? 'spin' : ''}" onclick="laden()" aria-label="Aktualisieren">${ICON.refresh}</button></div>
-  <p class="stand">${fehlerText ? `<span style="color:var(--minus)">${esc(fehlerText)}</span>` : stand ? `Stand ${pad(stand.getHours())}:${pad(stand.getMinutes())} Uhr` : 'Lädt…'}</p>`;
+  <p class="stand">${fehlerText ? `<span style="color:var(--minus)">${esc(fehlerText)}</span>` : stand ? `Stand ${pad(stand.getHours())}:${pad(stand.getMinutes())} Uhr` : 'Lädt…'}${tabellen.some(t => t.fehler) ? ' · <span style="color:var(--minus)">Eine Tabelle klemmt, siehe Setup</span>' : ''}</p>`;
 }
 
 // ---------- Tab: Anrufen ----------
 function renderAnrufen() {
   const faell = leads.filter(faellig).sort((a, b) => a.naechster.localeCompare(b.naechster));
   const neu = leads.filter(l => l.status === 'Neu' && !faellig(l));
-  const nochmal = leads.filter(l => l.status === 'Nicht erreicht' && !faellig(l));
+  const nochmal = leads.filter(l => !faellig(l) && (['Offen', 'Nicht erreicht'].includes(l.status) || (l.status === 'Zurückrufen' && !l.naechster)));
   const woche = leads.filter(l => Date.now() - new Date(l.datum) < 7 * 864e5).length;
   view.innerHTML = kopf('Anrufen') + (!stand && laedt ? '<p class="loading">Leads werden geladen…</p>' : `
     <div class="tiles">
       <div class="tile"><b>${woche}</b><span>Diese Woche</span></div>
-      <div class="tile"><b>${leads.filter(l => OFFEN.includes(l.status)).length}</b><span>Offen</span></div>
-      <div class="tile"><b>${leads.filter(l => l.status === 'Termin').length}</b><span>Termine</span></div>
+      <div class="tile"><b>${leads.filter(l => AKTIV.includes(l.status)).length}</b><span>Aktiv</span></div>
+      <div class="tile"><b>${leads.filter(l => l.status === 'Terminiert').length}</b><span>Termine</span></div>
     </div>
     ${block('Fällig', faell)}${block('Neu', neu)}${block('Nochmal versuchen', nochmal)}
-    ${faell.length + neu.length + nochmal.length ? '' : '<div class="card empty"><b>🎉</b>Alles erledigt. Gerade wartet niemand auf einen Anruf.</div>'}`);
+    ${stand && !DEMO && !tabellen.length ? `<div class="card empty"><b>📊</b>Noch keine Lead-Tabelle verbunden. <button class="pill wide" style="margin-top:var(--gap)" onclick="go('setup')">Zum Setup</button></div>`
+      : faell.length + neu.length + nochmal.length ? '' : '<div class="card empty"><b>🎉</b>Alles erledigt. Gerade wartet niemand auf einen Anruf.</div>'}`);
 }
 
 // ---------- Tab: Alle ----------
 function gefiltert() {
   const q = suche.trim().toLowerCase();
-  return leads.filter(l => (filter === 'Alle' || (filter === 'Offen' ? OFFEN.includes(l.status) : l.status === filter))
-    && (!q || [l.name, l.telefon, l.fahrzeug, l.interesse, l.notizen].join(' ').toLowerCase().includes(q)));
+  return leads.filter(l => (filter === 'Alle' || (filter === 'Aktiv' ? AKTIV.includes(l.status) : l.status === filter))
+    && (!q || [l.name, l.telefon, l.notizen, ...l.antworten.map(a => a[1])].join(' ').toLowerCase().includes(q)));
 }
 function listeHtml() {
   const l = gefiltert();
   return l.length ? `<div class="group">${l.map(leadZeile).join('')}</div>` : '<div class="card empty">Keine Leads gefunden.</div>';
 }
 function renderAlle() {
-  const anzahl = f => leads.filter(l => f === 'Alle' || (f === 'Offen' ? OFFEN.includes(l.status) : l.status === f)).length;
+  const anzahl = f => leads.filter(l => f === 'Alle' || (f === 'Aktiv' ? AKTIV.includes(l.status) : l.status === f)).length;
   view.innerHTML = kopf('Alle Leads') + `
     <label class="search">${ICON.search}<input type="search" placeholder="Name, Nummer, Fahrzeug" value="${esc(suche)}" oninput="suche=this.value;$('#liste').innerHTML=listeHtml()" aria-label="Leads durchsuchen"></label>
-    <div class="scroller">${['Offen', 'Alle', ...Object.keys(STATUS)].map(f => `<button class="pill ${f === filter ? 'sel' : ''}" onclick="filter=${js(f)};render()">${f} <span class="n">${anzahl(f)}</span></button>`).join('')}</div>
+    <div class="scroller">${['Aktiv', 'Alle', ...Object.keys(STATUS)].map(f => `<button class="pill ${f === filter ? 'sel' : ''}" onclick="filter=${js(f)};render()">${f} <span class="n">${anzahl(f)}</span></button>`).join('')}</div>
     <div id="liste">${listeHtml()}</div>`;
 }
 
@@ -148,10 +151,18 @@ function renderSetup() {
     <div class="label">Du</div>
     <div class="group"><label class="row"><span>Dein Name</span><input value="${esc(konto.name)}" placeholder="z. B. David" onchange="konto.name=this.value.trim();merke('jdv-konto',konto);toast('Gespeichert')" autocomplete="given-name"></label></div>
     <p class="hint">Steht bei jeder Notiz dabei, damit ihr wisst, wer telefoniert hat.</p>
+    <div class="label">Lead-Tabellen</div>
+    <div class="group">
+      ${tabellen.map(t => t.fehler ? `<div class="row"><span>⚠️ ${esc(t.name)}</span><span style="color:var(--minus)">klemmt</span></div>`
+        : t.url ? `<a class="row" href="${esc(t.url)}" target="_blank" rel="noopener"><span>📊 ${esc(t.name)}</span><span>${t.anzahl} ›</span></a>`
+        : `<div class="row"><span>📊 ${esc(t.name)}</span><span>${t.anzahl}</span></div>`).join('')}
+      ${heimUrl ? `<a class="row" href="${esc(heimUrl)}" target="_blank" rel="noopener"><span>➕ Tabelle verbinden</span><span>›</span></a>` : ''}
+    </div>
+    ${tabellen.filter(t => t.fehler).map(t => `<p class="hint" style="color:var(--minus)">${esc(t.name)}: ${esc(t.fehler)}</p>`).join('')}
+    <p class="hint">Neue Kampagne? Tipp auf „Tabelle verbinden“ und setz den Link zur neuen Lead-Tabelle in die nächste freie Zeile in Spalte A.</p>
     <div class="label">App</div>
     <div class="group">
       <button class="row" onclick="installHilfe()"><span>📲 Auf den Startbildschirm</span><span>›</span></button>
-      ${sheetUrl ? `<a class="row" href="${esc(sheetUrl)}" target="_blank" rel="noopener"><span>📊 Google Sheet öffnen</span><span>›</span></a>` : ''}
       <div class="row"><span>Version</span><span>${VERSION}</span></div>
     </div>
     ${DEMO ? '' : '<button class="pill wide" style="color:var(--minus);margin-top:var(--gap-l)" onclick="abmelden()">Abmelden</button>'}`;
@@ -178,7 +189,7 @@ async function anmelden() {
   try {
     const j = await api('liste');
     merke('jdv-konto', konto);
-    leads = j.leads; sheetUrl = j.sheetUrl || ''; stand = new Date();
+    uebernimm(j);
     go('anrufen');
     if (!istApp() && !lies('jdv-install', false)) { merke('jdv-install', true); installHilfe(); }
   } catch (e) {
@@ -214,14 +225,14 @@ function leadHtml(l) {
   const zeile = (k, w) => w ? `<div class="row"><span>${k}</span><span>${esc(w)}</span></div>` : '';
   const eingang = new Date(l.datum);
   return `<div class="sheet-head"><span></span><h2>${esc(l.name || 'Ohne Namen')}</h2><button class="pill" onclick="closeSheet()">Fertig</button></div>
-    <p class="sub">${esc([l.fahrzeug, l.interesse].filter(Boolean).join(' · ') || 'Keine Angaben zu Fahrzeug und Interesse')}</p>
+    <p class="sub">${esc(l.antworten.slice(0, 2).map(a => a[1]).join(' · ') || 'Keine Angaben aus dem Formular')}</p>
     <div class="two">
       ${l.telefon ? `<a class="big" href="${esc(telLink(l))}" onclick="anruf(event, ${js(l.id)})">${ICON.phone}Anrufen</a>` : '<button class="big" disabled>Keine Nummer</button>'}
       ${l.wa ? `<a class="big wa" href="${esc(l.wa)}" target="_blank" rel="noopener">${ICON.wa}WhatsApp</a>` : ''}
     </div>
     <div class="label">Status</div>
     <div class="seg">${Object.keys(STATUS).map(s => `<button class="pill ${s === l.status ? 'sel' : ''}" onclick="setze(${js(l.id)},{status:${js(s)}})">${s}</button>`).join('')}</div>
-    <div class="group"><label class="row"><span>Nächster Kontakt</span><input type="date" value="${esc(l.naechster)}" onchange="setze(${js(l.id)},{naechster:this.value})"></label></div>
+    <div class="group"><label class="row"><span>Termin oder Rückruf</span><input type="date" value="${esc(l.naechster)}" onchange="setze(${js(l.id)},{naechster:this.value})"></label></div>
     <div class="label">Neue Notiz</div>
     <textarea id="notiz" placeholder="Wie lief das Gespräch? Was will der Kunde?"></textarea>
     <p class="hint">🎙️ Tipp aufs Mikrofon der Tastatur und erzähl einfach. Beim Schließen wird die Notiz automatisch gespeichert.</p>
@@ -232,7 +243,7 @@ function leadHtml(l) {
     <div class="label">Verlauf</div>
     <div class="card verlauf">${l.notizen ? esc(l.notizen) : '<span class="muted">Noch keine Notizen.</span>'}</div>
     <div class="label">Details</div>
-    <div class="group">${zeile('Telefon', l.telefon)}${zeile('Eingang', isNaN(eingang) ? '' : eingang.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }))}${zeile('Anzeige', l.anzeige)}${zeile('Zuletzt bearbeitet', l.bearbeitet)}</div>`;
+    <div class="group">${zeile('Telefon', l.telefon)}${zeile('Eingang', isNaN(eingang) ? '' : eingang.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }))}${l.antworten.map(a => zeile(a[0], a[1])).join('')}${zeile('Anzeige', l.anzeige)}${zeile('Quelle', l.quelle)}${zeile('Tabelle', l.tabelle)}</div>`;
 }
 async function setze(id, aend) {
   const l = leads.find(x => x.id === id); if (!l) return;
@@ -451,31 +462,33 @@ document.addEventListener('focusout', () => setTimeout(() => {
 // ---------- Demo-Modus (ohne Sheet) ----------
 function demoApi(aktion, d) {
   const vor = (min) => new Date(Date.now() - min * 6e4).toISOString();
+  const lead = (id, min, name, nr, interesse, fahrzeug, status, notizen = '', ki = '', naechster = '') => ({
+    id, datum: vor(min), name, telefon: '+49 170 000000' + nr, wa: 'https://wa.me/49170000000' + nr, antworten: [['Interesse', interesse], ['Fahrzeug', fahrzeug]],
+    anzeige: 'Referenzautos (Video)', quelle: 'Instagram', tabelle: 'Leads November 2026', status, notizen, ki, naechster });
   window.DEMO_LEADS ||= [
-    { id: 'd1', datum: vor(12), name: 'Lena Becker', telefon: '+49 170 0000001', interesse: 'Premium-Aufbereitung', fahrzeug: 'VW Golf 8', anzeige: 'Herbst Aufbereitung', wa: 'https://wa.me/491700000001', status: 'Neu', notizen: '', ki: '', naechster: '', bearbeitet: '' },
-    { id: 'd2', datum: vor(95), name: 'Markus Schmidt', telefon: '+49 170 0000002', interesse: 'Leasingrückläufer', fahrzeug: 'BMW X5', anzeige: 'Leasing zurück', wa: 'https://wa.me/491700000002', status: 'Neu', notizen: '', ki: '', naechster: '', bearbeitet: '' },
-    { id: 'd3', datum: vor(1500), name: 'Sabine Klein', telefon: '+49 170 0000003', interesse: 'Scheibentönung', fahrzeug: 'Audi A4 Avant', anzeige: 'Folientechnik', wa: 'https://wa.me/491700000003', status: 'Rückruf', notizen: '19.11.26 10:12 David: Will Preis für hinten und Heckscheibe, ruft nach Rücksprache mit Mann zurück. Heute nochmal melden.', ki: 'Interessiert an Tönung der hinteren Scheiben am Audi A4. Will den Preis erst mit ihrem Mann besprechen.\nNächster Schritt: Heute zurückrufen und Angebot ab 220 € nennen.', naechster: heute(), bearbeitet: '19.11.26 10:12 David' },
-    { id: 'd4', datum: vor(2900), name: 'Tobias Wagner', telefon: '+49 170 0000004', interesse: 'Basic', fahrzeug: 'Mercedes C-Klasse', anzeige: 'Herbst Aufbereitung', wa: 'https://wa.me/491700000004', status: 'Nicht erreicht', notizen: '18.11.26 16:40 Jonathan: Mailbox, nichts drauf gesprochen.', ki: '', naechster: '', bearbeitet: '18.11.26 16:40 Jonathan' },
-    { id: 'd5', datum: vor(4400), name: 'Julia Hoffmann', telefon: '+49 170 0000005', interesse: 'Sternenhimmel', fahrzeug: 'VW T6 Multivan', anzeige: 'Veredeln', wa: 'https://wa.me/491700000005', status: 'Termin', notizen: '17.11.26 09:05 David: Termin fest, bringt den Bus am Montag um 8 Uhr.', ki: 'Will einen Sternenhimmel im T6. Termin steht.\nNächster Schritt: Montag 8 Uhr Annahme vorbereiten.', naechster: ymd(new Date(Date.now() + 3 * 864e5)), bearbeitet: '17.11.26 09:05 David' },
-    { id: 'd6', datum: vor(9000), name: 'Dennis Krämer', telefon: '+49 170 0000006', interesse: 'Luxus', fahrzeug: 'Porsche 911', anzeige: 'Herbst Aufbereitung', wa: 'https://wa.me/491700000006', status: 'Kunde', notizen: '13.11.26 14:20 Jonathan: Luxus-Paket gebucht, sehr zufrieden.', ki: '', naechster: '', bearbeitet: '13.11.26 14:20 Jonathan' },
+    lead('d1', 12, 'Lena Becker', 1, 'Referenzauto', 'VW Golf 8', 'Neu'),
+    lead('d2', 95, 'Markus Schmidt', 2, 'Aufbereitung', 'BMW X5', 'Neu'),
+    lead('d3', 1500, 'Sabine Klein', 3, 'Referenzauto', 'Audi A4 Avant', 'Zurückrufen', '19.11.26 10:12 David: Will den Preis mit ihrem Mann besprechen und meldet sich. Heute nochmal anrufen.', 'Interessiert an einer Aufbereitung als Referenzauto, will den Preis erst mit ihrem Mann besprechen.\nNächster Schritt: Heute zurückrufen und den Termin festmachen.', heute()),
+    lead('d4', 2900, 'Tobias Wagner', 4, 'Aufbereitung', 'Mercedes C-Klasse', 'Nicht erreicht', '18.11.26 16:40 Jonathan: Mailbox, nichts drauf gesprochen.'),
+    lead('d5', 4400, 'Julia Hoffmann', 5, 'Referenzauto', 'VW T6 Multivan', 'Terminiert', '17.11.26 09:05 David: Termin fest, bringt den Bus am Montag um 8 Uhr.', 'Will den T6 als Referenzauto aufbereiten lassen. Termin steht.\nNächster Schritt: Montag 8 Uhr Annahme vorbereiten.', ymd(new Date(Date.now() + 3 * 864e5))),
+    lead('d6', 9000, 'Dennis Krämer', 6, 'Anderes', 'Porsche 911', 'Auftrag', '13.11.26 14:20 Jonathan: Komplettpaket gebucht, sehr zufrieden.'),
   ];
   const DL = window.DEMO_LEADS, kopie = x => JSON.parse(JSON.stringify(x));
   return new Promise((ok, nein) => setTimeout(() => {
     const l = DL.find(x => x.id === d.id);
     const jetzt = new Date().toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', '');
-    if (aktion === 'liste') return ok({ leads: kopie(DL), sheetUrl: '' });
+    if (aktion === 'liste') return ok({ leads: kopie(DL), tabellen: [{ name: 'Leads November 2026', anzahl: DL.length }], heimUrl: '' });
     if (aktion === 'feedback') return ok({});
     if (aktion === 'speichern') {
       if (d.status !== undefined) l.status = d.status;
       if (d.naechster !== undefined) l.naechster = d.naechster;
       if (d.notiz) l.notizen = (l.notizen ? l.notizen + '\n\n' : '') + `${jetzt} ${konto.name || 'Demo'}: ${d.notiz}`;
-      l.bearbeitet = `${jetzt} ${konto.name || 'Demo'}`;
       return ok({ lead: kopie(l) });
     }
     if (aktion === 'ki') {
       if (!l.notizen) return nein(new Error('Es gibt noch keine Notizen zum Zusammenfassen.'));
-      l.ki = `Demo-Zusammenfassung: ${l.name} interessiert sich für ${l.interesse} am ${l.fahrzeug}. Im echten Betrieb schreibt Claude hier aus deinen Notizen eine Kurzfassung.\nNächster Schritt: Morgen anrufen und einen Termin vorschlagen.`;
-      return ok({ lead: kopie(l), vorschlag: { status: 'Rückruf', naechster: morgen() } });
+      l.ki = `Demo-Zusammenfassung: ${l.name} interessiert sich für ${l.antworten.map(a => a[1]).join(', ')}. Im echten Betrieb schreibt Claude hier aus deinen Notizen eine Kurzfassung.\nNächster Schritt: Morgen anrufen und einen Termin vorschlagen.`;
+      return ok({ lead: kopie(l), vorschlag: { status: 'Zurückrufen', naechster: morgen() } });
     }
   }, aktion === 'ki' ? 1400 : 250));
 }
