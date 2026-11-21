@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '5';
+const VERSION = '6';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'rgba(255,255,255,.35)' };
@@ -240,7 +240,7 @@ function leadHtml(l) {
     </div>
     <div class="label">Status</div>
     <div class="seg">${Object.keys(STATUS).map(s => `<button class="pill ${s === l.status ? 'sel' : ''}" onclick="setze(${js(l.id)},{status:${js(s)}})">${s}</button>`).join('')}</div>
-    <div class="group"><label class="row"><span>Termin oder Rückruf</span><input type="date" value="${esc(l.naechster)}" onchange="setze(${js(l.id)},{naechster:this.value})"></label></div>
+    <div class="group"><div class="row"><label for="termin">Termin oder Rückruf</label><span class="datum"><input id="termin" type="date" value="${esc(l.naechster)}" onchange="setze(${js(l.id)},{naechster:this.value})">${l.naechster ? `<button class="pill sm" onclick="setze(${js(l.id)},{naechster:''})" aria-label="Termin entfernen">✕</button>` : ''}</span></div></div>
     <div class="label">Neue Notiz</div>
     <textarea id="notiz" placeholder="Wie lief das Gespräch? Was will der Kunde?"></textarea>
     <p class="hint">🎙️ Tipp aufs Mikrofon der Tastatur und erzähl einfach. Beim Schließen wird die Notiz automatisch gespeichert.</p>
@@ -261,7 +261,7 @@ async function setze(id, aend) {
   Object.assign(l, aend); leadNeu(id); render();
   try {
     Object.assign(l, (await api('speichern', { id, ...aend })).lead);
-    toast(aend.status ? `Status: ${aend.status}` : aend.naechster ? `Melden am ${datumKurz(aend.naechster)}` : 'Gespeichert');
+    toast(aend.status ? `Status: ${aend.status}` : aend.naechster ? `Melden am ${datumKurz(aend.naechster)}` : aend.naechster === '' ? 'Termin entfernt' : 'Gespeichert');
   } catch (e) { Object.assign(l, alt); toast(e.message); }
   leadNeu(id); render();
 }

@@ -87,7 +87,8 @@ p{margin:0 0 var(--gap)}
 input,select,textarea{font:inherit;font-size:16px;color:var(--txt);background:rgba(255,255,255,.09);border:0;border-radius:12px;padding:10px 12px;min-width:0;outline:none}
 input:focus-visible,textarea:focus-visible{box-shadow:0 0 0 2px var(--accent)}
 .row>input{width:55%;text-align:right;min-height:44px}
-.row>input[type=date]{width:auto}
+.row>input[type=date],.datum input{width:auto}
+.datum{display:flex;align-items:center;gap:var(--gap-s)}
 input.full{width:100%;padding:13px 16px;margin:0 0 var(--gap)}
 textarea{display:block;width:100%;margin:0 0 var(--gap);min-height:110px;padding:13px 16px;border-radius:20px;resize:vertical;line-height:1.4}
 .search{display:flex;align-items:center;gap:8px;margin:0 0 var(--gap);padding:0 14px;border-radius:var(--r-sm)}
