@@ -63,6 +63,8 @@ Unter *Setup → Design* wählt jeder für sein Handy Dunkel oder Hell und ob da
 
 ## Neue Kampagne, neue Tabelle
 
+**Beim neuen Meta-Sofortformular** bei den Kontaktinformationen neben Name und Telefonnummer auch **E-Mail** anhaken (ist aus dem Facebook-Profil vorausgefüllt). Die App übernimmt die E-Mail dann automatisch in die Kundendaten und nach Lexware. Laufende Formulare lässt Meta nicht ändern, deshalb erst beim nächsten Formular.
+
 Link zur neuen Lead-Tabelle in „JD Vertrieb“ in die nächste freie Zeile in Spalte A setzen. Beim nächsten Aktualisieren sind die Leads in der App. In der App führt *Setup → Tabelle verbinden* direkt dorthin. Alte Tabellen dürfen drinbleiben, dann tauchen offene Rückrufe weiter auf. Wer sie nicht mehr braucht, löscht die Zeile.
 
 Kann eine Tabelle nicht gelesen werden (falscher Link, kein Zugriff), zeigt die App das unter *Setup* an, die anderen Tabellen laufen weiter.
