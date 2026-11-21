@@ -11,6 +11,7 @@
  *   TEAM_PASSWORT      Passwort, mit dem sich das Team in der App anmeldet
  *   ANTHROPIC_API_KEY  Claude-Schlüssel für die KI-Zusammenfassung (beginnt mit sk-ant-api)
  *   PUSH_GEHEIMNIS     Geheimnis für den Push-Dienst (push/worker.js), gleich wie GEHEIMNIS bei Cloudflare
+ *   LEXWARE_API_KEY    Schlüssel aus Lexware Office (Einstellungen > Öffentliche API), für Kunden und Angebote
  *
  * Nach dem Einfügen einmal die Funktion vertriebEinrichten ausführen: Sie fragt die Berechtigungen ab
  * (Drive für Fotos) und legt die Zeitauslöser für die Benachrichtigungen an.
@@ -38,7 +39,7 @@ function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
     pruefe(d.pw);
-    const aktion = { liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos, vorlage }[d.aktion];
+    const aktion = { liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos, vorlage, lexArtikel, lexKunde, lexAngebot }[d.aktion];
     if (!aktion) throw fehler('aktion', 'Unbekannte Aktion.');
     out = Object.assign({ ok: true }, aktion(d));
   } catch (err) {
@@ -168,7 +169,9 @@ function liste() {
     }
   });
   leads.sort((a, b) => b.datum.localeCompare(a.datum));
-  return { leads, tabellen, heimUrl: SpreadsheetApp.getActiveSpreadsheet().getUrl(), vorlage: props().getProperty('WA_VORLAGE') || '' };
+  const alle = props().getProperties();
+  leads.forEach((l) => { l.lex = alle['LEX_' + l.id] || ''; });   // Kontakt in Lexware, falls schon angelegt
+  return { lexware: !!alle.LEXWARE_API_KEY, leads, tabellen, heimUrl: SpreadsheetApp.getActiveSpreadsheet().getUrl(), vorlage: props().getProperty('WA_VORLAGE') || '' };
 }
 
 // Lead über seine id finden, frisch aus der Tabelle, weil Meta und das Sortier-Skript Zeilen verschieben.
@@ -424,4 +427,101 @@ function fotos(d) {
   }
   liste.sort((a, b) => a.name.localeCompare(b.name));
   return { fotos: liste, ordner: ordner.getUrl() };
+}
+
+// ---------- Lexware Office: Kunde anlegen und Angebotsentwurf ----------
+// Die Schnittstelle gibt es ab Tarif XL. Pro Lead merkt sich das Skript die Kontakt-id (LEX_<Lead-id>),
+// damit kein Kunde doppelt entsteht. Angebote bleiben Entwurf: prüfen und verschicken geht in Lexware.
+const LEX_APP = 'https://app.lexware.de/permalink/';
+
+function lex(pfad, body) {
+  const key = String(props().getProperty('LEXWARE_API_KEY') || '').trim();
+  if (!key) throw fehler('lexware', 'Lexware ist noch nicht verbunden (LEXWARE_API_KEY fehlt in den Skripteigenschaften).');
+  const opt = { method: body ? 'post' : 'get', headers: { Authorization: 'Bearer ' + key, Accept: 'application/json' }, muteHttpExceptions: true };
+  if (body) Object.assign(opt, { contentType: 'application/json', payload: JSON.stringify(body) });
+  for (let versuch = 0; ; versuch++) {
+    const res = UrlFetchApp.fetch('https://api.lexware.io' + pfad, opt), code = res.getResponseCode();
+    if (code === 429 && versuch < 3) { Utilities.sleep(1000); continue; }   // Lexware erlaubt 2 Anfragen pro Sekunde
+    let j = {};
+    try { j = JSON.parse(res.getContentText() || '{}'); } catch (e) { }
+    if (code < 300) return j;
+    if (code === 401 || code === 403) throw fehler('lexware', 'Lexware lehnt den Schlüssel ab. Stimmt LEXWARE_API_KEY, und hat euer Tarif die Öffentliche API (ab XL)?');
+    const was = (j.details || []).map((x) => x.field + ' ' + x.violation).concat((j.IssueList || []).map((x) => x.source + ' ' + x.i18nKey));
+    throw fehler('lexware', 'Lexware meldet Fehler ' + code + (was.length ? ': ' + was.join(', ') : '') + '.');
+  }
+}
+
+// Firmendaten einmal holen und 6 Stunden merken: Name fürs Setup, Kleinunternehmer heißt ohne Umsatzsteuer
+function lexProfil() {
+  const c = CacheService.getScriptCache(), z = c.get('LEX_PROFIL');
+  if (z) return JSON.parse(z);
+  const p = lex('/v1/profile'), kurz = { firma: p.companyName || '', ohneSteuer: !!p.smallBusiness || p.taxType === 'vatfree' };
+  c.put('LEX_PROFIL', JSON.stringify(kurz), 21600);
+  return kurz;
+}
+
+// Artikel aus Lexware (eure Pakete und Leistungen) mit Endpreis
+function lexArtikel() {
+  const p = lexProfil();
+  const artikel = (lex('/v1/articles?size=250').content || []).filter((a) => !a.archived).map((a) => {
+    const pr = a.price || {}, steuer = p.ohneSteuer ? 0 : Number(pr.taxRate) || 0;
+    const brutto = pr.grossPrice != null ? pr.grossPrice : Math.round((pr.netPrice || 0) * (100 + steuer)) / 100;
+    return { id: a.id, name: a.title || '', art: a.type, einheit: a.unitName || 'Stück', steuer, preis: p.ohneSteuer ? pr.netPrice || 0 : brutto };
+  });
+  artikel.sort((a, b) => a.name.localeCompare(b.name));
+  return { firma: p.firma, artikel };
+}
+
+function lexKontakt(appId, l) {
+  const key = 'LEX_' + appId;
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    if (props().getProperty(key)) return props().getProperty(key);
+    const teile = (l.name || 'Ohne Namen').trim().split(/\s+/), nachname = teile.pop();
+    const kontakt = { version: 0, roles: { customer: {} }, person: { firstName: teile.join(' ') || undefined, lastName: nachname },
+      note: ('Aus JD Vertrieb. ' + l.antworten.map((a) => a.join(': ')).join(', ')).slice(0, 1000) };
+    if (l.telefon) kontakt.phoneNumbers = { mobile: [l.telefon] };
+    const id = lex('/v1/contacts', kontakt).id;
+    props().setProperty(key, id);
+    return id;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Lead als Kunden in Lexware anlegen (passiert beim ersten Angebot auch von selbst)
+function lexKunde(d) {
+  if (props().getProperty('LEX_' + d.id)) return { lex: props().getProperty('LEX_' + d.id) };
+  const { t, zeile } = finde(d.id), id = lexKontakt(d.id, leseZeile(t, zeile));
+  return Object.assign(speichern({ id: d.id, wer: d.wer, notiz: 'In Lexware als Kunde angelegt' }), { lex: id });
+}
+
+// Angebotsentwurf aus den gewählten Leistungen. Preise sind Endpreise, wie der Kunde sie zahlt.
+function lexAngebot(d) {
+  const posten = (Array.isArray(d.posten) ? d.posten : []).map((x) => ({
+    artikel: String(x.artikel || ''), art: x.art, name: String(x.name || '').trim().slice(0, 255), einheit: String(x.einheit || 'Pauschal').slice(0, 50),
+    menge: Number(x.menge), preis: Math.round(Number(x.preis) * 100) / 100, steuer: [0, 7, 19].includes(Number(x.steuer)) ? Number(x.steuer) : 19,
+  })).filter((x) => x.name && x.menge > 0 && x.menge <= 1000 && x.preis >= 0 && x.preis < 1e6);
+  if (!posten.length) throw fehler('leer', 'Wähl mindestens eine Leistung aus.');
+  if (posten.length > 50) throw fehler('leer', 'Höchstens 50 Positionen.');
+  const p = lexProfil(), { t, zeile } = finde(d.id), l = leseZeile(t, zeile);
+  const kontakt = lexKontakt(d.id, l), auto = (l.antworten.find((a) => a[0] === 'Fahrzeug') || [])[1] || '';
+  const datum = (tage) => berlin(new Date(Date.now() + tage * 864e5), "yyyy-MM-dd'T'HH:mm:ss.SSSXXX");
+  const angebot = lex('/v1/quotations', {
+    voucherDate: datum(0), expirationDate: datum(30),
+    address: { contactId: kontakt },
+    lineItems: posten.map((x) => Object.assign(x.artikel ? { id: x.artikel } : {}, {
+      type: !x.artikel ? 'custom' : x.art === 'PRODUCT' ? 'material' : 'service',
+      name: x.name, quantity: x.menge, unitName: x.einheit,
+      unitPrice: p.ohneSteuer ? { currency: 'EUR', netAmount: x.preis, taxRatePercentage: 0 } : { currency: 'EUR', grossAmount: x.preis, taxRatePercentage: x.steuer },
+    })),
+    totalPrice: { currency: 'EUR' },
+    taxConditions: { taxType: p.ohneSteuer ? 'vatfree' : 'gross' },
+    title: 'Angebot',
+    introduction: auto ? 'Fahrzeug: ' + auto : undefined,
+  });
+  const summe = posten.reduce((s, x) => s + x.menge * x.preis, 0).toFixed(2).replace('.', ',');
+  const notiz = 'Angebot in Lexware angelegt (Entwurf, ' + summe + ' €): ' + posten.map((x) => (x.menge === 1 ? '' : x.menge + '× ') + x.name).join(', ');
+  return Object.assign(speichern({ id: d.id, wer: d.wer, notiz }), { lex: kontakt, link: LEX_APP + 'quotations/edit/' + angebot.id });
 }

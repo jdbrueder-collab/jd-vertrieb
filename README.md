@@ -20,6 +20,7 @@ Alles im Google-Konto, dem die Lead-Tabellen gehören.
    - `TEAM_PASSWORT` = ein Passwort, das ihr euch ausdenkt (damit meldet ihr euch in der App an)
    - `ANTHROPIC_API_KEY` = euer Claude-Schlüssel (beginnt mit `sk-ant-api`, zu finden unter console.anthropic.com → API Keys)
    - `PUSH_GEHEIMNIS` = das Geheimnis des Push-Dienstes (steht lokal in `push/.geheimnis`, siehe unten)
+   - `LEXWARE_API_KEY` = Schlüssel aus Lexware Office (*Einstellungen → Öffentliche API*, gibt es ab Tarif XL), optional
 4. **Als Web-App bereitstellen:** Oben rechts *Bereitstellen → Neue Bereitstellung*. Beim Zahnrad *Typ auswählen* → **Web-App**. *Ausführen als:* **Ich**, *Zugriff:* **Jeder**. Auf *Bereitstellen*, Zugriff erlauben (Google fragt nach Tabellen und externen Verbindungen). Die **Web-App-URL** kopieren (endet auf `/exec`).
 5. **URL eintragen:** Die URL in `config.js` bei `window.JD_API` eintragen und hochladen (oder einfach an Claude schicken). Die URL ist kein Geheimnis, ohne Passwort liefert sie nichts.
 6. **App öffnen:** Link der App auf dem Handy öffnen, Name und Team-Passwort eingeben, dann *Setup → Auf den Startbildschirm*.
@@ -42,6 +43,14 @@ Beim Lead unter *Fotos* lassen sich Bilder in voller Auflösung hochladen, eins 
 ## WhatsApp bei „Nicht erreicht“
 
 Wer beim Lead den Status auf *Nicht erreicht* setzt, bekommt die Frage „Per WhatsApp schreiben?“. Ein Tipp öffnet WhatsApp mit fertigem Text, im Verlauf landet ein Vermerk. Den Text stellt man unter *Setup → WhatsApp bei „Nicht erreicht“* ein, er gilt fürs ganze Team (Skripteigenschaft `WA_VORLAGE`). Platzhalter: `{Name}` (Vorname des Kunden) und `{Wunsch}` (Interesse) müssen drinbleiben, `{Ich}` ist der Name dessen, der schreibt.
+
+## Lexware
+
+Ist `LEXWARE_API_KEY` hinterlegt, hat jeder Lead einen Bereich *Lexware*:
+
+- **Kunde anlegen** legt den Lead als Kunden in Lexware an (Name, Handynummer, Interesse und Fahrzeug als Notiz). Das Skript merkt sich die Kontakt-id (Skripteigenschaft `LEX_<Lead-id>`), ein Kunde entsteht nie doppelt. Danach führt *Kunde ↗* direkt zum Kontakt in Lexware.
+- **Angebot** zeigt eure Artikel aus Lexware zum Antippen, dazu eigene Positionen mit Bezeichnung und Preis. Preise sind Endpreise (bei Kleinunternehmern ohne Umsatzsteuer). *Angebot anlegen* legt es als **Entwurf** in Lexware an, 30 Tage gültig, mit dem Fahrzeug im Einleitungstext. Fehlt der Kunde noch, wird er dabei angelegt. Prüfen und verschicken geht in Lexware über *Angebot in Lexware öffnen*. Im Verlauf landet ein Vermerk mit Summe und Positionen.
+- Pakete und Preise pflegt ihr in Lexware unter *Artikel*, die App liest sie jedes Mal frisch. *Setup → Lexware → Prüfen* zeigt, ob der Schlüssel funktioniert und wie viele Artikel da sind.
 
 ## Design
 

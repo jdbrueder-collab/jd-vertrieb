@@ -92,6 +92,10 @@ input:focus-visible,textarea:focus-visible{box-shadow:0 0 0 2px var(--accent)}
 .row>input[type=date],.datum input{width:auto}
 .datum input{min-width:8.5em;min-height:44px}
 .row>input[type=checkbox]{width:auto;min-height:0;padding:0;background:none;accent-color:var(--accent)}
+.menge{display:flex;align-items:center;gap:var(--gap-s);white-space:nowrap}
+.menge b{min-width:1.4em;text-align:center}
+.eigene>input{width:auto;flex:1;text-align:left}
+.eigene>#ep-preis{flex:0 0 5.5em;text-align:right}
 .datum{display:flex;align-items:center;gap:var(--gap-s)}
 /* Lead-Fenster: Status und Anrufen/WhatsApp bleiben unten fest stehen, wie die Tab-Leiste */
 .panel:has(> .leadfuss){padding-bottom:0}

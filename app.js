@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '15';
+const VERSION = '16';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -33,6 +33,10 @@ const fotoCache = {}, fotoStand = {}, fotoRest = {};   // Fotos je Lead, laufend
 // WhatsApp bei „Nicht erreicht“. Die Vorlage gilt fürs ganze Team und liegt im Google-Skript (Setup → WhatsApp-Nachricht).
 const VORLAGE_STANDARD = 'Hallo {Name}, hier ist {Ich} von JD Brüder. Ich habe gerade versucht, dich wegen deiner Anfrage zum Thema {Wunsch} anzurufen. Wann passt es dir am besten für einen kurzen Rückruf?';
 let vorlage = VORLAGE_STANDARD;
+// Lexware: Kunde anlegen und Angebotsentwurf (nur sichtbar, wenn im Google-Skript ein Schlüssel hinterlegt ist)
+const LEX_APP = 'https://app.lexware.de/permalink/';
+let lexAn = false, lexArtikelCache = null, angebot = null;   // angebot: gerade offene Angebotsseite
+const lexLink = {};          // zuletzt angelegtes Angebot je Lead
 const waFrage = {};          // Leads, bei denen gerade die Frage „Jetzt per WhatsApp schreiben?“ steht
 let ziel = decodeURIComponent((location.hash.match(/^#lead=(.+)$/) || [])[1] || '');   // Tipp auf eine Benachrichtigung
 if (ziel) history.replaceState(null, '', location.pathname + location.search);
@@ -48,7 +52,7 @@ async function api(aktion, daten = {}) {
   if (!j.ok) throw Object.assign(new Error(j.fehler || 'Fehler'), { code: j.code });
   return j;
 }
-function uebernimm(j) { leads = j.leads; tabellen = j.tabellen || []; heimUrl = j.heimUrl || ''; vorlage = j.vorlage || VORLAGE_STANDARD; stand = new Date(); }
+function uebernimm(j) { leads = j.leads; tabellen = j.tabellen || []; heimUrl = j.heimUrl || ''; vorlage = j.vorlage || VORLAGE_STANDARD; lexAn = DEMO || !!j.lexware; stand = new Date(); }
 async function laden(still) {
   if (!angemeldet() || laedt) return;
   laedt = true; $('.roundbtn')?.classList.add('spin');
@@ -186,6 +190,7 @@ function renderSetup() {
       <button class="row" onclick="installHilfe()"><span>📲 Auf den Startbildschirm</span><span>›</span></button>
       ${pushOk() ? `<button class="row" onclick="pushEin()"><span>🔔 Benachrichtigungen</span><span>${Notification.permission === 'granted' ? 'An' : 'Einschalten ›'}</span></button>`
         : '<div class="row"><span>🔔 Benachrichtigungen</span><span class="muted">Erst auf den Startbildschirm</span></div>'}
+      ${lexAn ? '<button class="row" onclick="lexPruefen()"><span>🧾 Lexware</span><span>Prüfen ›</span></button>' : '<div class="row"><span>🧾 Lexware</span><span class="muted">Nicht verbunden</span></div>'}
       <div class="row"><span>Version</span><span>${VERSION}</span></div>
     </div>
     ${DEMO ? '' : '<button class="pill wide" style="color:var(--minus);margin-top:var(--gap-l)" onclick="abmelden()">Abmelden</button>'}`;
@@ -238,7 +243,7 @@ function abmelden(msg = '') {
 // ---------- Lead-Fenster ----------
 function openLead(id, fokus) {
   const l = leads.find(x => x.id === id); if (!l) return;
-  offen = id;
+  offen = id; angebot = null;
   sheet(leadHtml(l));
   if (!fotoCache[id]) fotosLaden(id);
   const entwurf = lies('jdv-entwurf', {});
@@ -270,6 +275,9 @@ function leadHtml(l) {
     <div class="label">KI-Zusammenfassung</div>
     <div class="card"><div class="ki" id="ki">${l.ki ? esc(l.ki) : '<span class="muted">Noch keine. Sobald du eine Notiz speicherst, fasst Claude zusammen.</span>'}</div>${vor}
       ${l.notizen ? `<button class="pill wide" id="kbtn" style="margin:var(--gap) 0 0" onclick="kiStarten(${id})">✨ ${l.ki ? 'Neu zusammenfassen' : 'Zusammenfassen'}</button>` : ''}</div>
+    ${lexAn ? `<div class="label">Lexware</div>
+    <div class="card">${lexLink[l.id] ? `<a class="pill wide sel" href="${esc(lexLink[l.id])}" target="_blank" rel="noopener">🧾 Angebot in Lexware öffnen ↗</a>` : ''}
+      <div class="two" style="margin:0">${l.lex ? `<a class="pill" href="${esc(LEX_APP + 'contacts/view/' + l.lex)}" target="_blank" rel="noopener">👤 Kunde ↗</a>` : `<button class="pill" onclick="kundeAnlegen(${id}, this)">👤 Kunde anlegen</button>`}<button class="pill" onclick="angebotOeffnen(${id})">🧾 Angebot</button></div></div>` : ''}
     <div class="label">Verlauf</div>
     <div class="card verlauf">${l.notizen ? esc(l.notizen) : '<span class="muted">Noch keine Notizen.</span>'}</div>
     <div class="label">Fotos</div>
@@ -427,6 +435,73 @@ async function fotosHoch(id, dateien) {
   await fotosLaden(id);
 }
 
+// ---------- Lexware: Kunde und Angebot ----------
+async function kundeAnlegen(id, knopf) {
+  knopf.disabled = true; knopf.textContent = 'Wird angelegt…';
+  try { const j = await api('lexKunde', { id }); Object.assign(leads.find(x => x.id === id) || {}, j.lead, { lex: j.lex }); toast('Kunde in Lexware angelegt'); }
+  catch (e) { toast(e.message); }
+  leadNeu(id);
+}
+async function lexPruefen() {
+  try { const j = await api('lexArtikel'); lexArtikelCache = j.artikel; toast(`Lexware verbunden: ${j.firma}, ${j.artikel.length} Artikel`); }
+  catch (e) { toast(e.message); }
+}
+// Angebotsseite im selben Fenster: Artikel aus Lexware antippen, eigene Positionen dazu, als Entwurf anlegen
+const euro = n => n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
+const angebotPosten = a => [...(a.artikel || []).filter(x => a.menge[x.id]).map(x => ({ artikel: x.id, art: x.art, name: x.name, einheit: x.einheit, steuer: x.steuer, preis: x.preis, menge: a.menge[x.id] })), ...a.eigene];
+async function angebotOeffnen(id) {
+  const notiz = $('#notiz')?.value.trim();   // angefangene Notiz bleibt als Entwurf am Lead
+  if (notiz) merke('jdv-entwurf', { ...lies('jdv-entwurf', {}), [id]: notiz });
+  offen = null;
+  const a = angebot = { id, artikel: lexArtikelCache, menge: {}, eigene: [] };
+  angebotZeichnen(); $('.panel').scrollTop = 0;
+  try { lexArtikelCache = (await api('lexArtikel')).artikel; } catch (e) { a.fehler = e.message; }
+  if (angebot === a) { a.artikel = lexArtikelCache; angebotZeichnen(); }
+}
+function angebotZeichnen() {
+  const p = $('.panel'); if (!p || !angebot) return;
+  const name = $('#ep-name')?.value || '', preis = $('#ep-preis')?.value || '', top = p.scrollTop;
+  p.innerHTML = '<div class="grab"></div>' + angebotHtml(angebot);
+  $('#ep-name').value = name; $('#ep-preis').value = preis; p.scrollTop = top;
+}
+function angebotHtml(a) {
+  const l = leads.find(x => x.id === a.id) || {}, posten = angebotPosten(a), summe = posten.reduce((s, x) => s + x.preis * x.menge, 0);
+  const artikel = !a.artikel ? `<div class="card muted">${esc(a.fehler || 'Artikel werden aus Lexware geladen…')}</div>`
+    : !a.artikel.length ? '<div class="card muted">In Lexware sind noch keine Artikel angelegt. Leg eure Pakete dort unter Artikel an, dann kannst du sie hier antippen. Bis dahin gehen eigene Positionen.</div>'
+    : `<div class="group">${a.artikel.map((x, i) => `<div class="row"><span>${esc(x.name)}<br><span class="muted small">${euro(x.preis)}${x.einheit && x.einheit !== 'Pauschal' ? ' / ' + esc(x.einheit) : ''}</span></span><span class="menge">${a.menge[x.id] ? `<button class="pill sm" aria-label="${esc(x.name)} weniger" onclick="angebotMenge(${i}, -1)">−</button><b>${a.menge[x.id]}</b>` : ''}<button class="pill sm" aria-label="${esc(x.name)} dazu" onclick="angebotMenge(${i}, 1)">+</button></span></div>`).join('')}</div>`;
+  return `<div class="sheet-head"><button class="pill" onclick="openLead(${js(a.id)})">Zurück</button><h2>Angebot</h2><span></span></div>
+    <p class="hint">Für ${esc(l.name || 'den Kunden')}. Es wird als Entwurf in Lexware angelegt, dort prüfst und verschickst du es.</p>
+    <div class="label">Leistungen aus Lexware</div>${artikel}
+    <div class="label">Eigene Position</div>
+    <div class="group">${a.eigene.map((x, i) => `<div class="row"><span>${esc(x.name)}</span><span class="menge">${euro(x.preis)}<button class="pill sm" aria-label="${esc(x.name)} entfernen" onclick="angebot.eigene.splice(${i}, 1); angebotZeichnen()">✕</button></span></div>`).join('')}
+      <div class="row eigene"><input id="ep-name" placeholder="z. B. Lederpflege" maxlength="255" aria-label="Bezeichnung"><input id="ep-preis" inputmode="decimal" placeholder="€" aria-label="Preis in Euro"><button class="pill sm" aria-label="Position hinzufügen" onclick="eigeneDazu()">+</button></div></div>
+    <p class="hint">Preise sind Endpreise, so wie der Kunde sie zahlt.</p>
+    <div class="leadfuss"><button class="big gold" id="abtn" onclick="angebotAnlegen()">Angebot anlegen${posten.length ? ' · ' + euro(summe) : ''}</button></div>`;
+}
+function angebotMenge(i, d) {
+  const x = angebot.artikel[i];
+  angebot.menge[x.id] = Math.max(0, (angebot.menge[x.id] || 0) + d); angebotZeichnen();
+}
+function eigeneDazu() {
+  const n = $('#ep-name').value.trim(), t = $('#ep-preis').value.trim();
+  const preis = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t);   // 1.299,50 oder 54.5
+  if (!n || !t || !(preis >= 0)) { toast('Gib eine Bezeichnung und einen Preis ein.'); return false; }
+  angebot.eigene.push({ name: n, menge: 1, preis: Math.round(preis * 100) / 100, einheit: 'Pauschal' });
+  $('#ep-name').value = $('#ep-preis').value = ''; angebotZeichnen(); return true;
+}
+async function angebotAnlegen() {
+  if (($('#ep-name').value.trim() || $('#ep-preis').value.trim()) && !eigeneDazu()) return;   // getippte Position nicht vergessen
+  const a = angebot, posten = angebotPosten(a), knopf = $('#abtn');
+  if (!posten.length) return toast('Wähl mindestens eine Leistung aus.');
+  knopf.disabled = true; knopf.textContent = 'Wird in Lexware angelegt…';
+  try {
+    const j = await api('lexAngebot', { id: a.id, posten });
+    Object.assign(leads.find(x => x.id === a.id) || {}, j.lead, { lex: j.lex }); lexLink[a.id] = j.link;
+    if (angebot === a) openLead(a.id);
+    toast('Angebot als Entwurf in Lexware angelegt'); render();
+  } catch (e) { toast(e.message); if (angebot === a) angebotZeichnen(); }
+}
+
 // ---------- Benachrichtigungen ----------
 // Versand über den kleinen Dienst bei Cloudflare (push/), ausgelöst vom Google-Skript. Auf dem iPhone geht Push
 // nur in der installierten App (ab iOS 16.4) und erst, nachdem man es einmal erlaubt hat.
@@ -459,7 +534,7 @@ function sheet(html) {
 }
 function closeSheet() {
   const id = offen, notiz = $('#notiz')?.value.trim();
-  $('#sheet').hidden = true; $('#sheet').innerHTML = ''; offen = null;
+  $('#sheet').hidden = true; $('#sheet').innerHTML = ''; offen = null; angebot = null;
   if (id && notiz) notizSenden(id, notiz);
 }
 function toast(msg) {
@@ -622,11 +697,20 @@ function demoApi(aktion, d) {
   return new Promise((ok, nein) => setTimeout(() => {
     const l = DL.find(x => x.id === d.id);
     const jetzt = new Date().toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', '');
-    if (aktion === 'liste') return ok({ leads: kopie(DL), tabellen: [{ name: 'Leads November 2026', anzahl: DL.length }], heimUrl: '' });
+    if (aktion === 'liste') return ok({ lexware: true, leads: kopie(DL), tabellen: [{ name: 'Leads November 2026', anzahl: DL.length }], heimUrl: '' });
     if (aktion === 'feedback') return ok({});
     if (aktion === 'push' || aktion === 'pushTest' || aktion === 'foto') return ok({});
     if (aktion === 'vorlage') return ok({});
     if (aktion === 'fotos') return ok({ fotos: [], ordner: '' });
+    const vermerk = t => { l.notizen = (l.notizen ? l.notizen + '\n\n' : '') + `${jetzt} ${konto.name || 'Demo'}: ${t}`; };
+    if (aktion === 'lexArtikel') return ok({ firma: 'JD Brüder (Demo)', artikel: [['a1', 'Außenwäsche', 49], ['a2', 'Innenreinigung', 129], ['a3', 'Keramikversiegelung', 699], ['a4', 'Politur', 249]]
+      .map(([id, name, preis]) => ({ id, name, preis, art: 'SERVICE', einheit: 'Pauschal', steuer: 19 })) });
+    if (aktion === 'lexKunde') { if (!l.lex) vermerk('In Lexware als Kunde angelegt'); l.lex = 'demo'; return ok({ lead: kopie(l), lex: 'demo' }); }
+    if (aktion === 'lexAngebot') {
+      l.lex = 'demo';
+      vermerk(`Angebot in Lexware angelegt (Entwurf, ${euro(d.posten.reduce((s, x) => s + x.menge * x.preis, 0))}): ${d.posten.map(x => (x.menge === 1 ? '' : x.menge + '× ') + x.name).join(', ')}`);
+      return ok({ lead: kopie(l), lex: 'demo', link: 'https://app.lexware.de/' });
+    }
     if (aktion === 'speichern') {
       if (d.status !== undefined) l.status = d.status;
       if (d.naechster !== undefined) l.naechster = d.naechster;

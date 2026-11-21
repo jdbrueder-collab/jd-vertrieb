@@ -35,6 +35,21 @@ function welt(props) {
   ]);
   const heim = blatt([['Link'], ['https://docs.google.com/spreadsheets/d/' + A + '/edit?usp=sharing', ''], ['https://docs.google.com/spreadsheets/d/' + KAPUTT + '/edit', 'Alt']]);
   const feedback = [], cache = {}, pushes = [], drive = { ordner: [], geaendert: 1, weg: [] };
+  // Nachgebautes Lexware: merkt sich Anfragen, Antworten lassen sich vorgeben (z. B. 429)
+  const lexware = { anfragen: [], naechste: [] };
+  const lexAntwort = (url, o) => {
+    const body = o.payload ? JSON.parse(o.payload) : null, pfad = url.replace('https://api.lexware.io', '');
+    lexware.anfragen.push({ pfad, methode: o.method, auth: o.headers.Authorization, body });
+    const vor = lexware.naechste.shift();
+    if (vor) return { getResponseCode: () => vor.code, getContentText: () => JSON.stringify(vor.body || {}) };
+    const j = pfad === '/v1/profile' ? { companyName: 'JD Brüder', smallBusiness: false, taxType: 'net' }
+      : pfad.startsWith('/v1/articles') ? { content: [
+        { id: 'A2', title: 'Politur', type: 'SERVICE', unitName: 'Pauschal', price: { netPrice: 168.07, grossPrice: 200, leadingPrice: 'GROSS', taxRate: 19 } },
+        { id: 'A1', title: 'Innenreinigung', type: 'SERVICE', unitName: 'Pauschal', price: { netPrice: 100, leadingPrice: 'NET', taxRate: 19 } },
+        { id: 'A3', title: 'Alt', type: 'PRODUCT', archived: true, price: {} }] }
+      : pfad === '/v1/contacts' ? { id: 'K-1', version: 1 } : pfad === '/v1/quotations' ? { id: 'Q-1', version: 1 } : null;
+    return { getResponseCode: () => j ? 200 : 404, getContentText: () => JSON.stringify(j || {}) };
+  };
   let claudeBody = null;
   const ordner = (name) => {
     const o = { id: 'O' + drive.ordner.length, name, dateien: [], freigabe: null, getId: () => o.id, getUrl: () => 'https://drive/' + o.id,
@@ -59,7 +74,7 @@ function welt(props) {
         return { getSheets: () => [blatt([['Nur ein Hinweis']]), lead], getName: () => 'Leads November 2026', getUrl: () => 'https://a' }; // ohne Zeitzone, wie die echte Tabelle
       },
     },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] ?? null, setProperty: (k, v) => { props[k] = v; }, setProperties: (o) => Object.assign(props, o) }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] ?? null, setProperty: (k, v) => { props[k] = v; }, setProperties: (o) => Object.assign(props, o), getProperties: () => ({ ...props }) }) },
     DriveApp: {
       Access: { ANYONE_WITH_LINK: 'jeder' }, Permission: { VIEW: 'ansehen' },
       getFileById: () => ({ getLastUpdated: () => new Date(drive.geaendert) }),
@@ -71,10 +86,12 @@ function welt(props) {
       getUuid: () => 'abcdef12-0000',
       newBlob: (bytes, typ, name) => ({ bytes, typ, name }),
       base64Decode: (t) => Array.from(Buffer.from(t, 'base64')), base64Encode: (b) => Buffer.from(b).toString('base64'),
-      formatDate: (d, tz, f) => f === 'dd.MM.yy HH:mm' ? '20.11.26 14:03' : f.startsWith('yyyy') ? d.toISOString().slice(0, 19) : 'Freitag',
+      formatDate: (d, tz, f) => f === 'dd.MM.yy HH:mm' ? '20.11.26 14:03' : f.endsWith('XXX') ? d.toISOString().slice(0, 23) + '+01:00' : f.startsWith('yyyy') ? d.toISOString().slice(0, 19) : 'Freitag',
+      sleep: () => {},
     },
     ContentService: { createTextOutput: (t) => ({ t, setMimeType() { return this; } }), MimeType: { JSON: 'json' } },
     UrlFetchApp: { fetch: (url, o) => {
+      if (url.startsWith('https://api.lexware.io')) return lexAntwort(url, o);
       if (url.includes('workers.dev')) {
         pushes.push({ url, headers: o.headers, body: JSON.parse(o.payload) });
         return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ weg: drive.weg }) };
@@ -87,7 +104,7 @@ function welt(props) {
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(__dirname + '/apps-script/vertrieb.gs', 'utf8'), ctx);
   const post = (d) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(d) } }).t);
-  return { post, ctx, props, pushes, drive, aendern: () => drive.geaendert++, lead: lead.rows, heim: heim.rows, feedback, cache, claude: () => claudeBody };
+  return { post, ctx, lexware, props, pushes, drive, aendern: () => drive.geaendert++, lead: lead.rows, heim: heim.rows, feedback, cache, claude: () => claudeBody };
 }
 
 const w = welt({ TEAM_PASSWORT: 'geheim', ANTHROPIC_API_KEY: 'sk-ant-api-test', PUSH_GEHEIMNIS: 'push-geheim' });
@@ -222,6 +239,66 @@ assert.match(r.fotos[1].name, / 2\.jpg$/);
 assert.strictEqual(r.fotos[0].bild, 'data:image/png;base64,AQID');
 assert.strictEqual(r.ordner, 'https://drive/O1');
 assert.strictEqual(w.drive.ordner[1].freigabe, 'jeder/ansehen');    // Link an den Kunden funktioniert
+
+// Lexware: ohne Schlüssel eine klare Meldung
+assert.match(w.post({ aktion: 'lexArtikel', pw }).fehler, /LEXWARE_API_KEY fehlt/);
+assert.strictEqual(w.post({ aktion: 'liste', pw }).lexware, false);
+w.props.LEXWARE_API_KEY = ' lex-schluessel ';
+r = w.post({ aktion: 'liste', pw });
+assert.strictEqual(r.lexware, true);
+assert.strictEqual(r.leads.find((l) => l.id === anna).lex, '');
+
+// Artikel: archivierte weg, sortiert, Endpreis (auch wenn nur netto hinterlegt), Profil nur einmal geholt
+r = w.post({ aktion: 'lexArtikel', pw });
+assert.ok(r.ok, r.fehler);
+assert.strictEqual(r.firma, 'JD Brüder');
+assert.strictEqual(JSON.stringify(r.artikel.map((a) => [a.name, a.preis, a.steuer])), '[["Innenreinigung",119,19],["Politur",200,19]]');
+assert.strictEqual(w.lexware.anfragen[0].auth, 'Bearer lex-schluessel');
+w.post({ aktion: 'lexArtikel', pw });
+assert.strictEqual(w.lexware.anfragen.filter((x) => x.pfad === '/v1/profile').length, 1);
+
+// Kunde anlegen: einmal, mit Vor- und Nachname, Handynummer, Vermerk im Verlauf
+w.lexware.anfragen.length = 0;
+r = w.post({ aktion: 'lexKunde', pw, wer: 'David', id: anna });
+assert.ok(r.ok, r.fehler);
+assert.strictEqual(r.lex, 'K-1');
+const kontakt = w.lexware.anfragen[0];
+assert.strictEqual(kontakt.pfad, '/v1/contacts');
+assert.strictEqual(JSON.stringify(kontakt.body.person), '{"firstName":"Anna","lastName":"Alt"}');
+assert.strictEqual(kontakt.body.phoneNumbers.mobile[0], '0171 1111111');
+assert.strictEqual(JSON.stringify(kontakt.body.roles), '{"customer":{}}');
+assert.match(r.lead.notizen, /David: In Lexware als Kunde angelegt$/);
+assert.strictEqual(w.post({ aktion: 'lexKunde', pw, id: anna }).lex, 'K-1');
+assert.strictEqual(w.lexware.anfragen.filter((x) => x.pfad === '/v1/contacts').length, 1);
+assert.strictEqual(w.post({ aktion: 'liste', pw }).leads.find((l) => l.id === anna).lex, 'K-1');
+
+// Angebot: nichts gewählt geht nicht; sonst Entwurf mit Endpreisen, Artikel und eigener Position, Vermerk und Link
+assert.strictEqual(w.post({ aktion: 'lexAngebot', pw, id: anna, posten: [{ name: 'X', menge: 0, preis: 5 }] }).code, 'leer');
+w.lexware.anfragen.length = 0;
+w.lexware.naechste.push({ code: 429 });       // zu schnell: kurz warten und nochmal
+r = w.post({ aktion: 'lexAngebot', pw, wer: 'David', id: anna, posten: [
+  { artikel: 'A2', art: 'SERVICE', name: 'Politur', einheit: 'Pauschal', menge: 1, preis: 200, steuer: 19 },
+  { name: 'Lederpflege', menge: 2, preis: 54.5 }] });
+assert.ok(r.ok, r.fehler);
+assert.strictEqual(r.link, 'https://app.lexware.de/permalink/quotations/edit/Q-1');
+const ang = w.lexware.anfragen.filter((x) => x.pfad === '/v1/quotations');
+assert.strictEqual(ang.length, 2);
+const q = ang[1].body;
+assert.strictEqual(q.address.contactId, 'K-1');
+assert.strictEqual(q.taxConditions.taxType, 'gross');
+assert.match(q.voucherDate, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+01:00$/);
+assert.ok(q.expirationDate > q.voucherDate);
+assert.strictEqual(q.introduction, 'Fahrzeug: Audi A6');
+assert.strictEqual(JSON.stringify(q.lineItems[0]), '{"id":"A2","type":"service","name":"Politur","quantity":1,"unitName":"Pauschal","unitPrice":{"currency":"EUR","grossAmount":200,"taxRatePercentage":19}}');
+assert.strictEqual(JSON.stringify(q.lineItems[1]), '{"type":"custom","name":"Lederpflege","quantity":2,"unitName":"Pauschal","unitPrice":{"currency":"EUR","grossAmount":54.5,"taxRatePercentage":19}}');
+assert.match(r.lead.notizen, /David: Angebot in Lexware angelegt \(Entwurf, 309,00 €\): Politur, 2× Lederpflege$/);
+
+// Fehler von Lexware lesbar, falscher Schlüssel erklärt
+w.lexware.naechste.push({ code: 406, body: { status: 406, details: [{ field: 'lineItems[0].unitPrice', violation: 'NOTNULL' }] } });
+assert.strictEqual(w.post({ aktion: 'lexAngebot', pw, id: anna, posten: [{ name: 'X', menge: 1, preis: 5 }] }).fehler, 'Lexware meldet Fehler 406: lineItems[0].unitPrice NOTNULL.');
+w.cache.LEX_PROFIL = undefined;
+w.lexware.naechste.push({ code: 401, body: { message: 'Unauthorized' } });
+assert.match(w.post({ aktion: 'lexArtikel', pw }).fehler, /lehnt den Schlüssel ab/);
 
 // Sperre nach 10 Fehlversuchen
 for (let i = 0; i < 10; i++) w.post({ aktion: 'liste', pw: 'falsch' });
