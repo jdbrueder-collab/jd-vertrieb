@@ -55,7 +55,7 @@ function welt(props) {
     else if (pfad === '/v1/contacts/K-1' && o.method === 'put') { lexware.kontakt = Object.assign(body, { version: body.version + 1 }); j = { id: 'K-1' }; }
     else if (pfad === '/v1/quotations?finalize=true') j = { id: 'Q-1', version: 1 };
     else if (pfad === '/v1/quotations/Q-1') j = { id: 'Q-1', voucherNumber: 'AG0049', voucherStatus: 'open', totalPrice: { totalGrossAmount: 409.56 } };
-    else if (pfad === '/v1/quotations/Q-1/file') return { getResponseCode: () => 200, getBlob: () => ({ bytes: '%PDF', setName(n) { this.name = n; return this; } }) };
+    else if (pfad === '/v1/quotations/Q-1/file') return { getResponseCode: () => 200, getBlob: () => ({ bytes: '%PDF', getBytes: () => [37, 80, 68, 70], setName(n) { this.name = n; return this; } }) };
     return { getResponseCode: () => j ? 200 : 404, getContentText: () => JSON.stringify(j || {}) };
   };
 
@@ -319,6 +319,9 @@ assert.strictEqual(JSON.stringify(q.lineItems[1]), '{"type":"custom","name":"Led
 assert.strictEqual(w.lexware.anfragen.find((x) => x.pfad.endsWith('/file')).accept, 'application/pdf');
 assert.strictEqual(JSON.stringify(r.angebot), JSON.stringify({ nr: 'AG0049', summe: 409.56, pdf: 'https://datei/Angebot AG0049.pdf', link: 'https://app.lexware.de/permalink/quotations/view/Q-1', datum: r.angebot.datum }));
 assert.ok(w.drive.ordner.some((o) => o.dateien.some((d) => d.name === 'Angebot AG0049.pdf')));
+assert.strictEqual(r.pdf64, 'JVBERg==');   // das PDF selbst für WhatsApp
+assert.strictEqual(JSON.stringify(w.post({ aktion: 'angebotPdf', pw, id: anna })), '{"ok":true,"nr":"AG0049","daten":"JVBERg=="}');
+assert.strictEqual(w.post({ aktion: 'angebotPdf', pw, id: ben }).code, 'weg');
 assert.match(r.lead.notizen, /David: Angebot AG0049 erstellt \(409,56 €, 20 % Rabatt\): 2× Interieur Aufbereitung, Lederpflege$/);
 assert.strictEqual(w.post({ aktion: 'liste', pw }).leads.find((l) => l.id === anna).angebot.nr, 'AG0049');
 // PDF klappt nicht: Angebot ist trotzdem da und gemerkt

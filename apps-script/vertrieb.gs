@@ -43,7 +43,7 @@ function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
     pruefe(d.pw);
-    const aktion = { liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos, vorlage, lexArtikel, lexDaten, lexAngebot, gesendet, angebotMail, artikelAus, nachziehen }[d.aktion];
+    const aktion = { liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos, vorlage, lexArtikel, lexDaten, lexAngebot, gesendet, angebotMail, angebotPdf, artikelAus, nachziehen }[d.aktion];
     if (!aktion) throw fehler('aktion', 'Unbekannte Aktion.');
     out = Object.assign({ ok: true }, aktion(d));
   } catch (err) {
@@ -629,18 +629,21 @@ function lexAngebot(d) {
   // Nummer, Summe und PDF. Das Angebot gibt es ab hier, deshalb geht ein Fehler danach nicht mehr verloren.
   const summe = posten.reduce((s, x) => s + x.menge * x.brutto, 0) * (1 - rabatt / 100);
   const angebot = { nr: '', summe: Math.round(summe * 100) / 100, pdf: '', link: LEX_APP + 'quotations/view/' + id, datum: berlin(new Date(), 'yyyy-MM-dd') };
+  let pdf64 = '';   // das PDF selbst, damit die App es gleich per WhatsApp teilen kann
   try {
     const q = lex('/v1/quotations/' + id);
     angebot.nr = q.voucherNumber || '';
     if ((q.totalPrice || {}).totalGrossAmount != null) angebot.summe = q.totalPrice.totalGrossAmount;
-    const datei = fotoOrdner(d.id, true).createFile(lex('/v1/quotations/' + id + '/file', null, 'get', true).setName('Angebot ' + (angebot.nr || id) + '.pdf'));
+    const blob = lex('/v1/quotations/' + id + '/file', null, 'get', true).setName('Angebot ' + (angebot.nr || id) + '.pdf');
+    pdf64 = Utilities.base64Encode(blob.getBytes());
+    const datei = fotoOrdner(d.id, true).createFile(blob);
     try { datei.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) { }
     angebot.pdf = datei.getUrl();
   } catch (e) { console.warn('Angebot ' + id + ': ' + e.message); }
   props().setProperty('ANGEBOT_' + d.id, JSON.stringify(angebot));
   const notiz = 'Angebot ' + (angebot.nr || '') + ' erstellt (' + euro(angebot.summe) + (rabatt ? ', ' + rabattText + ' Rabatt' : '') + '): '
     + posten.map((x) => (x.menge === 1 ? '' : String(x.menge).replace('.', ',') + '× ') + x.name).join(', ');
-  return Object.assign(speichern({ id: d.id, wer: d.wer, notiz: notiz.replace('Angebot  ', 'Angebot ') }), { lex: kontakt, angebot });
+  return Object.assign(speichern({ id: d.id, wer: d.wer, notiz: notiz.replace('Angebot  ', 'Angebot ') }), { lex: kontakt, angebot, pdf64 });
 }
 
 // Angebot verschickt: vermerken und, falls noch kein Rückruf geplant ist, in 3 Tagen nachfassen.
@@ -686,4 +689,12 @@ function angebotMail(d) {
       + (String(d.wer || '').trim() || 'Dein Team') + '\nJD Brüder',
   });
   return gesendet(Object.assign({}, d, { weg: 'Mail', an: email }));
+}
+
+// Das PDF des letzten Angebots für die App (base64). Sie teilt es per Teilen-Menü direkt in den WhatsApp-Chat.
+function angebotPdf(d) {
+  const a = JSON.parse(props().getProperty('ANGEBOT_' + d.id) || 'null');
+  if (!a) throw fehler('weg', 'Zu diesem Lead gibt es noch kein Angebot.');
+  const blob = lex('/v1/quotations/' + a.link.split('/').pop() + '/file', null, 'get', true);
+  return { nr: a.nr, daten: Utilities.base64Encode(blob.getBytes()) };
 }
