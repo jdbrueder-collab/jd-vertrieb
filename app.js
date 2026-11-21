@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '6';
+const VERSION = '7';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'rgba(255,255,255,.35)' };
@@ -232,28 +232,29 @@ function leadHtml(l) {
   const vor = v && (v.status !== l.status || (v.naechster && v.naechster !== l.naechster)) ? `<div class="vorschlag"><span>Vorschlag: <b>${esc(v.status)}</b>${v.naechster ? `, melden am ${datumKurz(v.naechster)}` : ''}</span><button class="pill sm sel" onclick="uebernehmen(${js(l.id)})">Übernehmen</button></div>` : '';
   const zeile = (k, w) => w ? `<div class="row"><span>${k}</span><span>${esc(w)}</span></div>` : '';
   const eingang = new Date(l.datum);
+  const id = js(l.id);
   return `<div class="sheet-head"><span></span><h2>${esc(l.name || 'Ohne Namen')}</h2><button class="pill" onclick="closeSheet()">Fertig</button></div>
-    <p class="sub">${esc(l.antworten.slice(0, 2).map(a => a[1]).join(' · ') || 'Keine Angaben aus dem Formular')}</p>
-    <div class="two">
-      ${l.telefon ? `<a class="big" href="${esc(telLink(l))}" onclick="anruf(event, ${js(l.id)})">${ICON.phone}Anrufen</a>` : '<button class="big" disabled>Keine Nummer</button>'}
-      ${l.wa ? `<a class="big wa" href="${esc(l.wa)}" target="_blank" rel="noopener">${ICON.wa}WhatsApp</a>` : ''}
-    </div>
-    <div class="label">Status</div>
-    <div class="seg">${Object.keys(STATUS).map(s => `<button class="pill ${s === l.status ? 'sel' : ''}" onclick="setze(${js(l.id)},{status:${js(s)}})">${s}</button>`).join('')}</div>
-    <div class="group"><div class="row"><label for="termin">Termin oder Rückruf</label><span class="datum"><input id="termin" type="date" value="${esc(l.naechster)}" onchange="setze(${js(l.id)},{naechster:this.value})">${l.naechster ? `<button class="pill sm" onclick="setze(${js(l.id)},{naechster:''})" aria-label="Termin entfernen">✕</button>` : ''}</span></div></div>
+    <div class="label">Details</div>
+    <div class="group">${zeile('Telefon', l.telefon)}${zeile('Eingang', isNaN(eingang) ? '' : eingang.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }))}${l.antworten.map(a => zeile(a[0], a[1])).join('')}${zeile('Anzeige', l.anzeige)}${zeile('Quelle', l.quelle)}${zeile('Tabelle', l.tabelle)}</div>
+    <div class="group"><div class="row"><label for="termin">Termin oder Rückruf</label><span class="datum"><input id="termin" type="date" value="${esc(l.naechster)}" onchange="setze(${id},{naechster:this.value})">${l.naechster ? `<button class="pill sm" onclick="setze(${id},{naechster:''})" aria-label="Termin entfernen">✕</button>` : ''}</span></div></div>
     <div class="label">Neue Notiz</div>
     <textarea id="notiz" placeholder="Wie lief das Gespräch? Was will der Kunde?"></textarea>
     <p class="hint">🎙️ Tipp aufs Mikrofon der Tastatur und erzähl einfach. Beim Schließen wird die Notiz automatisch gespeichert.</p>
-    <button class="pill wide" id="nbtn" onclick="notizSpeichern(${js(l.id)})">Notiz speichern</button>
+    <button class="pill wide" id="nbtn" onclick="notizSpeichern(${id})">Notiz speichern</button>
     <div class="label">KI-Zusammenfassung</div>
     <div class="card"><div class="ki" id="ki">${l.ki ? esc(l.ki) : '<span class="muted">Noch keine. Sobald du eine Notiz speicherst, fasst Claude zusammen.</span>'}</div>${vor}
-      ${l.notizen ? `<button class="pill wide" id="kbtn" style="margin:var(--gap) 0 0" onclick="kiStarten(${js(l.id)})">✨ ${l.ki ? 'Neu zusammenfassen' : 'Zusammenfassen'}</button>` : ''}</div>
+      ${l.notizen ? `<button class="pill wide" id="kbtn" style="margin:var(--gap) 0 0" onclick="kiStarten(${id})">✨ ${l.ki ? 'Neu zusammenfassen' : 'Zusammenfassen'}</button>` : ''}</div>
     <div class="label">Verlauf</div>
     <div class="card verlauf">${l.notizen ? esc(l.notizen) : '<span class="muted">Noch keine Notizen.</span>'}</div>
     <div class="label">Fotos</div>
     <div class="card" id="fotos">${fotosHtml(l)}</div>
-    <div class="label">Details</div>
-    <div class="group">${zeile('Telefon', l.telefon)}${zeile('Eingang', isNaN(eingang) ? '' : eingang.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }))}${l.antworten.map(a => zeile(a[0], a[1])).join('')}${zeile('Anzeige', l.anzeige)}${zeile('Quelle', l.quelle)}${zeile('Tabelle', l.tabelle)}</div>`;
+    <div class="leadfuss">
+      <label class="pill statuswahl"><span class="dot" style="--c:${STATUS[l.status] || STATUS.Neu}"></span><select aria-label="Status" onchange="setze(${id},{status:this.value})">${Object.keys(STATUS).map(s => `<option${s === l.status ? ' selected' : ''}>${s}</option>`).join('')}</select><span class="muted" aria-hidden="true">▴</span></label>
+      <div class="two">
+        ${l.telefon ? `<a class="big" href="${esc(telLink(l))}" onclick="anruf(event, ${id})">${ICON.phone}Anrufen</a>` : '<button class="big" disabled>Keine Nummer</button>'}
+        ${l.wa ? `<a class="big wa" href="${esc(l.wa)}" target="_blank" rel="noopener">${ICON.wa}WhatsApp</a>` : ''}
+      </div>
+    </div>`;
 }
 async function setze(id, aend) {
   const l = leads.find(x => x.id === id); if (!l) return;
