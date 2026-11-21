@@ -468,7 +468,7 @@ function lex(pfad, body, methode, pdf) {
     if (code < 300) return j;
     if (code === 401 || code === 403) throw fehler('lexware', 'Lexware lehnt den Schlüssel ab. Stimmt LEXWARE_API_KEY, und hat euer Tarif die Öffentliche API (ab XL)?');
     const was = (j.details || []).map((x) => x.field + ' ' + x.violation).concat((j.IssueList || []).map((x) => x.source + ' ' + x.i18nKey));
-    throw fehler('lexware', 'Lexware meldet Fehler ' + code + (was.length ? ': ' + was.join(', ') : '') + '.');
+    throw fehler('lexware', 'Lexware meldet Fehler ' + code + (was.length ? ': ' + was.join(', ') : j.message ? ': ' + j.message : '') + '.');
   }
 }
 
@@ -541,6 +541,7 @@ function lexKontakt(appId, l, k) {
       note: ('Aus JD Vertrieb. ' + l.antworten.map((a) => a.join(': ')).join(', ')).slice(0, 1000) };
     if (l.telefon) kontakt.phoneNumbers = { mobile: [l.telefon] };
     lexKontaktDaten(kontakt, k || l.kunde || {});
+    if (!kontakt.addresses) kontakt.addresses = { billing: [{ countryCode: 'DE' }] };   // ohne Rechnungsadresse nimmt Lexware kein Angebot an
     const id = lex('/v1/contacts', kontakt).id;
     props().setProperty(key, id);
     return id;
@@ -558,6 +559,15 @@ function lexSuche(nachname, telefon, email) {
     (tel.length === 9 && Object.values(c.phoneNumbers || {}).flat().some((n) => ziffern(n) === tel))
     || (mail && Object.values(c.emailAddresses || {}).flat().some((m) => String(m).toLowerCase() === mail)));
   return treffer ? treffer.id : '';
+}
+
+// Lexware nimmt ein fertiges Angebot nur mit genau einer Rechnungsadresse beim Kunden an. Fehlt sie (ältere oder
+// verknüpfte Kunden), wird mindestens das Land eingetragen. Straße und Ort kommen über die Kundendaten dazu.
+function lexAdresseSicher(id) {
+  const c = lex('/v1/contacts/' + id);
+  if (((c.addresses || {}).billing || []).length) return;
+  c.addresses = Object.assign(c.addresses || {}, { billing: [{ countryCode: 'DE' }] });
+  lex('/v1/contacts/' + id, c, 'put');
 }
 
 // Kundendaten lesen (ohne speichern) oder in Lexware speichern. Gibt es den Kunden noch nicht, wird er angelegt.
@@ -599,6 +609,7 @@ function lexAngebot(d) {
   const rabatt = Math.round(Math.min(100, Math.max(0, Number(d.rabatt) || 0)) * 100) / 100, rabattText = String(rabatt).replace('.', ',') + ' %';
   const { t, zeile } = finde(d.id), l = leseZeile(t, zeile);
   const kontakt = lexKontakt(d.id, l), auto = (l.antworten.find((a) => a[0] === 'Fahrzeug') || [])[1] || '';
+  lexAdresseSicher(kontakt);
   const datum = (tage) => berlin(new Date(Date.now() + tage * 864e5), "yyyy-MM-dd'T'HH:mm:ss.SSSXXX");
   const id = lex('/v1/quotations?finalize=true', {
     voucherDate: datum(0), expirationDate: datum(30),

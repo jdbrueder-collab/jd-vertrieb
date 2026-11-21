@@ -300,7 +300,7 @@ assert.strictEqual(w.post({ aktion: 'lexAngebot', pw, id: anna, posten: [{ name:
 assert.strictEqual(w.post({ aktion: 'lexAngebot', pw, id: anna, posten: [{ artikel: 'WEG', menge: 1 }] }).code, 'artikel');
 // fertiges Angebot mit eurem Steuer-Typ (netto), Artikelpreisen aus Lexware, eigener Position, Rabatt und PDF in Drive
 w.lexware.anfragen.length = 0;
-w.lexware.naechste.push(null, { code: 429 });   // Profil aus dem Cache, Artikel normal, Angebot zu schnell: warten, nochmal
+w.lexware.naechste.push(null, null, { code: 429 });   // Profil aus dem Cache, Artikel und Kontakt normal, Angebot zu schnell: warten, nochmal
 r = w.post({ aktion: 'lexAngebot', pw, wer: 'David', id: anna, rabatt: 20, referenz: true, posten: [
   { artikel: 'A1', menge: 2, preis: 1 },               // Preis aus der App zählt nicht, nur der aus Lexware
   { name: 'Lederpflege', menge: 1, preis: 59.5 }] });
@@ -321,10 +321,21 @@ assert.ok(w.drive.ordner.some((o) => o.dateien.some((d) => d.name === 'Angebot A
 assert.match(r.lead.notizen, /David: Angebot AG0049 erstellt \(409,56 €, 20 % Rabatt\): 2× Interieur Aufbereitung, Lederpflege$/);
 assert.strictEqual(w.post({ aktion: 'liste', pw }).leads.find((l) => l.id === anna).angebot.nr, 'AG0049');
 // PDF klappt nicht: Angebot ist trotzdem da und gemerkt
-w.lexware.naechste.push(null, null, null, { code: 500 });
+w.lexware.naechste.push(null, null, null, null, { code: 500 });   // Artikel, Kontakt, Angebot, Nummer normal, PDF kaputt
 r = w.post({ aktion: 'lexAngebot', pw, id: anna, posten: [{ artikel: 'A4', menge: 1 }] });
 assert.ok(r.ok, r.fehler);
 assert.strictEqual(r.angebot.nr, 'AG0049'); assert.strictEqual(r.angebot.pdf, '');
+
+// Kunde ohne Rechnungsadresse (z. B. alt oder verknüpft): vor dem Angebot wird das Land eingetragen, sonst lehnt Lexware ab
+delete w.lexware.kontakt.addresses;
+w.lexware.anfragen.length = 0;
+r = w.post({ aktion: 'lexAngebot', pw, id: anna, posten: [{ artikel: 'A4', menge: 1 }] });
+assert.ok(r.ok, r.fehler);
+assert.strictEqual(w.lexware.anfragen.map((x) => x.methode + ' ' + x.pfad.split('?')[0]).slice(1, 4).join(), 'get /v1/contacts/K-1,put /v1/contacts/K-1,post /v1/quotations');
+assert.strictEqual(JSON.stringify(w.lexware.kontakt.addresses), '{"billing":[{"countryCode":"DE"}]}');
+// Lexware-Meldung ohne Detailliste wird mit angezeigt
+w.lexware.naechste.push(null, null, { code: 406, body: { status: 406, message: 'Referenced contact needs to have exactly one billing address' } });
+assert.strictEqual(w.post({ aktion: 'lexAngebot', pw, id: anna, posten: [{ artikel: 'A4', menge: 1 }] }).fehler, 'Lexware meldet Fehler 406: Referenced contact needs to have exactly one billing address.');
 
 // Neue Anfrage: wird sofort Kunde in Lexware, mit E-Mail aus dem Formular
 const vorher = w.lexware.anfragen.filter((x) => x.pfad === '/v1/contacts').length;
@@ -332,7 +343,9 @@ w.lead.push(['l:6', new Date().toISOString(), 'Referenzautos', 'ig', 'referenzau
 w.aendern(); w.ctx.meldeNeueLeads();
 const neuK = w.lexware.anfragen.filter((x) => x.pfad === '/v1/contacts');
 assert.strictEqual(neuK.length, vorher + 1);
-assert.strictEqual(neuK.pop().body.emailAddresses.private[0], 'fritz@example.de');
+const fritzK = neuK.pop().body;
+assert.strictEqual(fritzK.emailAddresses.private[0], 'fritz@example.de');
+assert.strictEqual(JSON.stringify(fritzK.addresses), '{"billing":[{"countryCode":"DE"}]}');   // ohne Adresse im Formular: wenigstens das Land
 assert.ok(w.props['LEX_' + A + '~l:6']);
 
 // Verschickt: Vermerk, Datum am Angebot, Nachfassen in 3 Tagen (Anna ist „Zurückrufen“ ohne Termin)
@@ -368,7 +381,7 @@ assert.strictEqual(w.lexware.anfragen.filter((x) => x.pfad === '/v1/contacts').l
 assert.strictEqual(JSON.stringify(w.post({ aktion: 'nachziehen', pw })), '{"ok":true,"angelegt":0,"rest":0}');
 
 // Fehler von Lexware lesbar, falscher Schlüssel erklärt
-w.lexware.naechste.push(null, { code: 406, body: { status: 406, details: [{ field: 'lineItems[0].unitPrice', violation: 'NOTNULL' }] } });
+w.lexware.naechste.push(null, null, { code: 406, body: { status: 406, details: [{ field: 'lineItems[0].unitPrice', violation: 'NOTNULL' }] } });
 assert.strictEqual(w.post({ aktion: 'lexAngebot', pw, id: anna, posten: [{ name: 'X', menge: 1, preis: 5 }] }).fehler, 'Lexware meldet Fehler 406: lineItems[0].unitPrice NOTNULL.');
 w.cache.LEX_PROFIL = undefined;
 w.lexware.naechste.push({ code: 401, body: { message: 'Unauthorized' } });
