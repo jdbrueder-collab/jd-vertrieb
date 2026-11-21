@@ -1,6 +1,6 @@
 /* JD Vertrieb: Design aus Dayliner übernommen (Glas, Tab-Leiste, Bottom-Sheets), Farben auf JD Brüder umgestellt (Schwarz und Gold). */
 :root{--txt:#f3efe6;--mut:rgba(243,239,230,.58);--card:rgba(10,8,5,.5);--line:rgba(255,255,255,.08);
-  --accent:#b49759;--on-accent:#14100a;--ok:#8cc63f;--near:#f0a03c;--minus:#e8667e;--blue:#5aa9ff;--teal:#3fd0b0;--pink:#ef8fb6;
+  --accent:#b49759;--on-accent:#14100a;--ok:#8cc63f;--near:#f0a03c;--minus:#e8667e;--blue:#5aa9ff;--teal:#3fd0b0;--pink:#ef8fb6;--grau:rgba(255,255,255,.35);
   --bg:#0d0b08;--bgimg:radial-gradient(90% 45% at 65% 5%,#5a4622 0,rgba(90,70,34,0) 70%),radial-gradient(70% 40% at 5% 45%,#33281a 0,rgba(51,40,26,0) 70%),radial-gradient(80% 45% at 95% 78%,#3d3016 0,rgba(61,48,22,0) 70%);
   --r-lg:24px;--r-sm:16px;--pad:16px;--gap:12px;--gap-s:8px;--gap-l:20px;color-scheme:dark}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -187,6 +187,27 @@ body:has(#fbbtn:not([hidden])) .tabs{width:var(--tbw);left:calc(50% - 34px)}
   .tabs.press .tab-ind{top:5px;bottom:5px}
   .tabs button.hover,.tab-hi span.hover,.tabs button:active{transform:none!important}
 }
+/* --- Helles Design (Setup → Design), aufgebaut wie der Light-Modus von Dayliner. JD-Gold bleibt die Akzentfarbe. --- */
+html.hell{color-scheme:light;--txt:#1c1a16;--mut:rgba(28,26,22,.62);--card:rgba(255,255,255,.7);--line:rgba(0,0,0,.08);--near:#b8650a;--minus:#c8334f;--grau:rgba(0,0,0,.3);
+  --bg:#f4efe5;--bgimg:radial-gradient(90% 45% at 65% 5%,#fffaf0 0,rgba(255,250,240,0) 70%),radial-gradient(70% 40% at 5% 45%,#ecdfc4 0,rgba(236,223,196,0) 70%),radial-gradient(80% 45% at 95% 78%,#e9d8b4 0,rgba(233,216,180,0) 70%)}
+html.hell input,html.hell select,html.hell textarea{background:rgba(0,0,0,.06)}
+html.hell .card,html.hell .group,html.hell .tile{background:linear-gradient(180deg,rgba(255,255,255,.85),rgba(255,255,255,.65));box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.06)}
+html.hell .pill:not(.sel),html.hell .search{background:linear-gradient(180deg,rgba(255,255,255,.9),rgba(255,255,255,.7));box-shadow:0 1px 2px rgba(0,0,0,.06),0 4px 14px rgba(0,0,0,.06)}
+html.hell :is(.card,.group,.tile,.pill,.search,.tabs,.tab-ind,.fbbtn)::before{background:linear-gradient(160deg,#fff,rgba(0,0,0,.06) 40%,rgba(0,0,0,.04) 60%,rgba(0,0,0,.1))}
+html.hell .panel{background:linear-gradient(180deg,rgba(252,249,243,.94),rgba(244,239,229,.97));box-shadow:inset 0 1px 0 rgba(255,255,255,.9),0 -10px 40px rgba(0,0,0,.12)}
+html.hell .panel > .leadfuss{background:linear-gradient(180deg,rgba(255,255,255,.7),rgba(244,239,229,.96));box-shadow:inset 0 1px 0 rgba(0,0,0,.06)}
+html.hell .statusmenu{background:linear-gradient(180deg,rgba(255,255,255,.96),rgba(250,246,238,.96));box-shadow:0 10px 30px rgba(0,0,0,.12)}
+html.hell .backdrop{background:rgba(0,0,0,.25)}
+html.hell .grab{background:rgba(0,0,0,.2)}
+html.hell .tabs,html.hell .fbbtn{background:linear-gradient(180deg,rgba(255,255,255,.6),rgba(248,244,236,.75));box-shadow:0 10px 30px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.9)}
+html.hell .tabs button{color:#3a372f}
+html.hell .tab-ind{background:rgba(0,0,0,.07);box-shadow:none}
+html.hell .fbbtn{color:#c08a12}
+html.hell .toast{background:rgba(255,255,255,.94);box-shadow:0 10px 40px rgba(0,0,0,.18)}
+html.hell .demo{background:color-mix(in srgb,var(--accent) 18%,rgba(255,255,255,.92))}
+/* Gold als Schrift auf Hell: etwas dunkler, damit es lesbar bleibt */
+html.hell :is(.tab-hi,.statusmenu [aria-pressed=true]){color:#8a6a2c}
+
 /* Nur hochkant: quer gehalten deckt ein Hinweis die App ab */
 @media (orientation:landscape) and (max-height:500px) and (pointer:coarse){
   body::after{content:"📱\A\A Bitte halte dein Handy hochkant.";white-space:pre;position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;text-align:center;font-size:20px;line-height:1.4;color:#f3efe6;background:#0d0b08}
