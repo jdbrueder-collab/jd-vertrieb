@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '10';
+const VERSION = '11';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -325,6 +325,8 @@ async function kiStarten(id) {
   leadNeu(id); render();
 }
 // Anrufen: Wer nach dem Telefonat zurück in die App kommt, landet direkt im Notizfeld dieses Leads.
+// Als Anruf zählt nur, wenn die App gleich nach dem Tipp verlassen wird und länger als 5 Sekunden weg ist.
+// Abbrechen in der Rückfrage des iPhones öffnet so später nichts.
 function anruf(e, id) {
   merke('jdv-anruf', { id, t: Date.now(), weg: false });
   if (DEMO) {
@@ -334,13 +336,12 @@ function anruf(e, id) {
 }
 document.addEventListener('visibilitychange', () => {
   const a = lies('jdv-anruf', null);
-  if (document.hidden) { if (a) merke('jdv-anruf', { ...a, weg: true }); return; }
+  if (document.hidden) { if (a) merke('jdv-anruf', !a.weg && Date.now() - a.t < 10000 ? { ...a, weg: Date.now() } : null); return; }
   laden(true);
-  if (a?.weg && Date.now() - a.t < 3600e3) {
-    merke('jdv-anruf', null);
-    const l = leads.find(x => x.id === a.id);
-    if (l) { openLead(a.id, true); toast(`Wie lief es mit ${l.name}?`); }
-  }
+  if (!a?.weg) return;
+  merke('jdv-anruf', null);
+  const l = leads.find(x => x.id === a.id);
+  if (l && Date.now() - a.weg > 5000 && Date.now() - a.t < 3600e3) { openLead(a.id, true); toast(`Wie lief es mit ${l.name}?`); }
 });
 
 // ---------- Fotos ----------
