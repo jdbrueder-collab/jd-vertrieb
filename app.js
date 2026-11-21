@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '7';
+const VERSION = '8';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'rgba(255,255,255,.35)' };
@@ -249,13 +249,25 @@ function leadHtml(l) {
     <div class="label">Fotos</div>
     <div class="card" id="fotos">${fotosHtml(l)}</div>
     <div class="leadfuss">
-      <label class="pill statuswahl"><span class="dot" style="--c:${STATUS[l.status] || STATUS.Neu}"></span><select aria-label="Status" onchange="setze(${id},{status:this.value})">${Object.keys(STATUS).map(s => `<option${s === l.status ? ' selected' : ''}>${s}</option>`).join('')}</select><span class="muted" aria-hidden="true">▴</span></label>
+      <div class="group statusmenu" id="statusmenu" hidden>${Object.keys(STATUS).map(s => `<button class="row" aria-pressed="${s === l.status}" onclick="statusSetzen(${id}, ${js(s)})"><span><span class="dot" style="--c:${STATUS[s]}"></span>${s}</span>${s === l.status ? '<span aria-hidden="true">✓</span>' : ''}</button>`).join('')}</div>
+      <button class="pill statuswahl" aria-expanded="false" aria-controls="statusmenu" onclick="statusMenu()"><span class="dot" style="--c:${STATUS[l.status] || STATUS.Neu}"></span><b>${esc(l.status)}</b><span class="muted" aria-hidden="true">▴</span></button>
       <div class="two">
         ${l.telefon ? `<a class="big" href="${esc(telLink(l))}" onclick="anruf(event, ${id})">${ICON.phone}Anrufen</a>` : '<button class="big" disabled>Keine Nummer</button>'}
         ${l.wa ? `<a class="big wa" href="${esc(l.wa)}" target="_blank" rel="noopener">${ICON.wa}WhatsApp</a>` : ''}
       </div>
     </div>`;
 }
+// Status-Menü über der unteren Leiste: klappt nach oben auf, Tipp daneben oder Escape schließt es
+function statusMenu(auf = $('#statusmenu')?.hidden) {
+  const m = $('#statusmenu'); if (!m) return;
+  m.hidden = !auf; $('.statuswahl').setAttribute('aria-expanded', auf);
+}
+function statusSetzen(id, s) {
+  statusMenu(false);
+  if (leads.find(x => x.id === id)?.status !== s) setze(id, { status: s });
+}
+document.addEventListener('pointerdown', e => { if (!e.target.closest('#statusmenu, .statuswahl')) statusMenu(false); }, true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') statusMenu(false); });
 async function setze(id, aend) {
   const l = leads.find(x => x.id === id); if (!l) return;
   const alt = { ...l };
