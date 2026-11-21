@@ -103,9 +103,11 @@ input:focus-visible,textarea:focus-visible{box-shadow:0 0 0 2px var(--accent)}
 .drei .pill svg{width:18px;height:18px;flex:none}
 .angebotzeile{display:flex;justify-content:space-between;align-items:baseline;gap:var(--gap);margin:0 0 var(--gap)}
 .angebotzeile .muted{white-space:nowrap}
-.fussoben{display:flex;gap:var(--gap-s);margin:0 0 var(--gap-s)}
-.fussoben .statuswahl{flex:1;margin:0;min-width:0}
-.fussoben .sel{flex:none;padding:13px 18px;white-space:nowrap}
+.fussoben{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--gap);margin:0 0 var(--gap-s)}
+.fussoben:has(> :only-child){grid-template-columns:1fr}
+.fussoben .statuswahl{margin:0;min-width:0;padding:13px 12px;gap:8px;font-size:16px}
+.fussoben .statuswahl b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fussoben .sel{padding:13px 12px;white-space:nowrap}
 .datum{display:flex;align-items:center;gap:var(--gap-s)}
 /* Lead-Fenster: Status und Anrufen/WhatsApp bleiben unten fest stehen, wie die Tab-Leiste */
 .panel:has(> .leadfuss){padding-bottom:0}
