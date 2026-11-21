@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '14';
+const VERSION = '15';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -262,7 +262,7 @@ function leadHtml(l) {
   return `<div class="sheet-head"><span></span><h2>${esc(l.name || 'Ohne Namen')}</h2><button class="pill" onclick="closeSheet()">Fertig</button></div>
     <div class="label">Details</div>
     <div class="group">${zeile('Telefon', l.telefon)}${zeile('Eingang', isNaN(eingang) ? '' : eingang.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }))}${l.antworten.map(a => zeile(a[0], a[1])).join('')}${zeile('Anzeige', l.anzeige)}${zeile('Quelle', l.quelle)}${zeile('Tabelle', l.tabelle)}</div>
-    <div class="group"><div class="row"><label for="termin">Termin oder Rückruf</label><span class="datum"><input id="termin" type="date" value="${esc(l.naechster)}" onchange="setze(${id},{naechster:this.value})">${l.naechster ? `<button class="pill sm" onclick="setze(${id},{naechster:''})" aria-label="Termin entfernen">✕</button>` : ''}</span></div></div>
+    <div class="group"><div class="row"><label for="termin">Termin oder Rückruf</label><span class="datum"><input id="termin" type="date" value="${esc(l.naechster)}" onchange="terminSetzen(${id}, this.value)"><button class="pill sm" onclick="terminSetzen(${id}, '')" aria-label="Termin entfernen"${l.naechster ? '' : ' hidden'}>✕</button></span></div></div>
     <div class="label">Neue Notiz</div>
     <textarea id="notiz" placeholder="Wie lief das Gespräch? Was will der Kunde?"></textarea>
     <p class="hint">🎙️ Tipp aufs Mikrofon der Tastatur und erzähl einfach. Beim Schließen wird die Notiz automatisch gespeichert.</p>
@@ -298,13 +298,37 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') statusMenu(f
 async function setze(id, aend) {
   const l = leads.find(x => x.id === id); if (!l) return;
   const alt = { ...l };
+  if (aend.naechster !== undefined) { clearTimeout(termin[id]?.uhr); delete termin[id]; }
   Object.assign(l, aend); leadNeu(id); render();
   try {
     Object.assign(l, (await api('speichern', { id, ...aend })).lead);
     if (aend.status) aend.status === 'Nicht erreicht' ? waFrage[id] = true : delete waFrage[id];
-    toast(aend.status ? `Status: ${aend.status}` : aend.naechster ? `Melden am ${datumKurz(aend.naechster)}` : aend.naechster === '' ? 'Termin entfernt' : 'Gespeichert');
+    toast(aend.status ? `Status: ${aend.status}` : 'Gespeichert');
   } catch (e) { Object.assign(l, alt); toast(e.message); }
   leadNeu(id); render();
+}
+// Termin: iOS meldet schon beim Tippen im Kalender jede Änderung. Deshalb das Fenster nicht neu zeichnen
+// (sonst klappt der Kalender weg und Tipps gehen verloren) und erst speichern, wenn eine Sekunde nichts mehr kommt.
+const termin = {};
+function terminSetzen(id, wert) {
+  const l = leads.find(x => x.id === id); if (!l) return;
+  const t = termin[id] ||= { alt: l.naechster }, el = offen === id && $('#termin');
+  if (el) { el.value = wert; el.nextElementSibling.hidden = !wert; }
+  l.naechster = wert; render();
+  clearTimeout(t.uhr);
+  t.uhr = setTimeout(async () => {
+    delete termin[id];
+    const jetzt = () => leads.find(x => x.id === id);   // Liste kann inzwischen neu geladen sein
+    try {
+      const neu = (await api('speichern', { id, naechster: wert })).lead;
+      if (jetzt()?.naechster === wert) Object.assign(jetzt(), neu);
+      toast(wert ? `Melden am ${datumKurz(wert)}` : 'Termin entfernt');
+    } catch (e) {
+      if (jetzt()?.naechster === wert) { jetzt().naechster = t.alt; leadNeu(id); }
+      toast(e.message);
+    }
+    render();
+  }, 1000);
 }
 // Tipp auf „WhatsApp“ in der Frage: WhatsApp geht mit dem fertigen Text auf, im Verlauf landet ein Vermerk
 function waGeschickt(id) {
