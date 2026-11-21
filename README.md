@@ -39,6 +39,14 @@ Danach im Apps Script oben die Funktion **vertriebEinrichten** wählen und **Aus
 
 Beim Lead unter *Fotos* lassen sich Bilder in voller Auflösung hochladen, eins nach dem anderen. Sie landen in Google Drive im Ordner **JD Vertrieb Fotos**, pro Kunde ein Unterordner mit Name und Auto. Der Unterordner ist für jeden mit dem Link sichtbar, damit *An Kunden* den Link direkt per WhatsApp verschicken kann. Der kostenlose Google-Speicher (15 GB) reicht für grob 100 Autos mit je 30 Fotos.
 
+## WhatsApp bei „Nicht erreicht“
+
+Wer beim Lead den Status auf *Nicht erreicht* setzt, bekommt die Frage „Per WhatsApp schreiben?“. Ein Tipp öffnet WhatsApp mit fertigem Text, im Verlauf landet ein Vermerk. Den Text stellt man unter *Setup → WhatsApp bei „Nicht erreicht“* ein, er gilt fürs ganze Team (Skripteigenschaft `WA_VORLAGE`). Platzhalter: `{Name}` (Vorname des Kunden) und `{Wunsch}` (Interesse) müssen drinbleiben, `{Ich}` ist der Name dessen, der schreibt.
+
+## Design
+
+Unter *Setup → Design* wählt jeder für sein Handy Dunkel oder Hell und ob das Gold im Hintergrund zu sehen ist.
+
 ## Neue Kampagne, neue Tabelle
 
 Link zur neuen Lead-Tabelle in „JD Vertrieb“ in die nächste freie Zeile in Spalte A setzen. Beim nächsten Aktualisieren sind die Leads in der App. In der App führt *Setup → Tabelle verbinden* direkt dorthin. Alte Tabellen dürfen drinbleiben, dann tauchen offene Rückrufe weiter auf. Wer sie nicht mehr braucht, löscht die Zeile.
