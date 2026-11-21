@@ -57,6 +57,10 @@ Ist `LEXWARE_API_KEY` hinterlegt (Skripteigenschaft im Google-Skript), passiert 
 - **Artikel im Angebot:** Unter *Setup → Lexware → Artikel im Angebot* legt ihr fest, welche Lexware-Artikel in der App erscheinen (z. B. ohne Bauleistungen). Gilt fürs ganze Team (`ARTIKEL_AUS`), neue Artikel sind erst mal sichtbar.
 - Pakete und Preise pflegt ihr in Lexware unter *Artikel*. *Setup → Lexware → Prüfen* zeigt, ob der Schlüssel funktioniert.
 
+## WhatsApp von der JD-Brüder-Nummer
+
+Alle WhatsApp-Knöpfe öffnen `whatsapp://` statt `wa.me`. Auf Davids iPhone (privates WhatsApp und WhatsApp Business mit der JD-Brüder-Nummer) geht nur so WhatsApp Business auf, `wa.me` nimmt dort das private WhatsApp (getestet mit `wa-test.html`). Welche App iOS für `whatsapp://` nimmt, legt das iPhone selbst fest; ändert sich das nach einem Update, die Testseite nochmal durchtippen.
+
 ## Design
 
 Unter *Setup → Design* wählt jeder für sein Handy Dunkel oder Hell und ob das Gold im Hintergrund zu sehen ist.

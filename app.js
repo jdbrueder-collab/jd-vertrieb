@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '20';
+const VERSION = '21';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -110,6 +110,9 @@ function relativ(iso) {
   return min < 6 * 1440 ? datumKurz(ymd(d)) : `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.`;
 }
 // Was der Kunde will, z. B. Referenzauto (Formularfrage „Interesse“, sonst die erste Antwort)
+// WhatsApp über whatsapp:// statt wa.me: Auf Davids iPhone (privates WhatsApp und WhatsApp Business) öffnet nur so
+// WhatsApp Business mit der JD-Brüder-Nummer, wa.me nimmt dort das private WhatsApp (getestet 21.11.2026).
+const waLink = (l, text) => `whatsapp://send?${l?.wa ? 'phone=' + l.wa.replace(/\D/g, '') + (text ? '&' : '') : ''}${text ? 'text=' + encodeURIComponent(text) : ''}`;
 const wunsch = l => (l.antworten.find(a => a[0] === 'Interesse') || l.antworten[0] || [])[1] || '';
 const waText = l => vorlage.replaceAll('{Name}', (l.name || '').split(' ')[0]).replaceAll('{Wunsch}', wunsch(l) || 'Fahrzeugaufbereitung')
   .replaceAll('{Ich}', konto.name || 'das Team').replace(/ +,/g, ',');
@@ -118,7 +121,7 @@ function leadZeile(l) {
   return `<div class="lead">
     <button class="open" onclick="openLead(${js(l.id)})"><span class="dot" style="--c:${STATUS[l.status] || STATUS.Neu}"></span>
       <span class="tt"><b>${esc(l.name || 'Ohne Namen')}</b><span>${esc(info)}</span></span>${wann(l)}</button>
-    ${l.wa ? `<a class="callbtn wa" href="${esc(l.wa)}" target="_blank" rel="noopener" aria-label="${esc(l.name)} auf WhatsApp schreiben">${ICON.wa}</a>` : ''}
+    ${l.wa ? `<a class="callbtn wa" href="${esc(waLink(l))}" aria-label="${esc(l.name)} auf WhatsApp schreiben">${ICON.wa}</a>` : ''}
     ${l.telefon ? `<a class="callbtn" href="${esc(telLink(l))}" onclick="anruf(event, ${js(l.id)})" aria-label="${esc(l.name)} anrufen">${ICON.phone}</a>` : ''}
   </div>`;
 }
@@ -288,11 +291,11 @@ function leadHtml(l) {
     <div class="card" id="fotos">${fotosHtml(l)}</div>
     <div class="leadfuss">
       <div class="group statusmenu" id="statusmenu" hidden>${Object.keys(STATUS).map(s => `<button class="row" aria-pressed="${s === l.status}" onclick="statusSetzen(${id}, ${js(s)})"><span><span class="dot" style="--c:${STATUS[s]}"></span>${s}</span>${s === l.status ? '<span aria-hidden="true">✓</span>' : ''}</button>`).join('')}</div>
-      ${waFrage[l.id] && l.wa ? `<div class="vorschlag"><span>Per WhatsApp schreiben?</span><a class="pill sm sel" href="${esc(l.wa + '?text=' + encodeURIComponent(waText(l)))}" target="_blank" rel="noopener" onclick="waGeschickt(${id})">WhatsApp</a><button class="pill sm" onclick="delete waFrage[${id}];leadNeu(${id})">Nein</button></div>` : ''}
+      ${waFrage[l.id] && l.wa ? `<div class="vorschlag"><span>Per WhatsApp schreiben?</span><a class="pill sm sel" href="${esc(waLink(l, waText(l)))}" onclick="waGeschickt(${id})">WhatsApp</a><button class="pill sm" onclick="delete waFrage[${id}];leadNeu(${id})">Nein</button></div>` : ''}
       <div class="fussoben"><button class="pill statuswahl" aria-expanded="false" aria-controls="statusmenu" onclick="statusMenu()"><span class="dot" style="--c:${STATUS[l.status] || STATUS.Neu}"></span><b>${esc(l.status)}</b><span class="muted" aria-hidden="true">▴</span></button>${lexAn ? `<button class="pill sel" onclick="angebotOeffnen(${id})">🧾 Angebot</button>` : ''}</div>
       <div class="two">
         ${l.telefon ? `<a class="big" href="${esc(telLink(l))}" onclick="anruf(event, ${id})">${ICON.phone}Anrufen</a>` : '<button class="big" disabled>Keine Nummer</button>'}
-        ${l.wa ? `<a class="big wa" href="${esc(l.wa)}" target="_blank" rel="noopener">${ICON.wa}WhatsApp</a>` : ''}
+        ${l.wa ? `<a class="big wa" href="${esc(waLink(l))}">${ICON.wa}WhatsApp</a>` : ''}
       </div>
     </div>`;
 }
@@ -412,12 +415,12 @@ document.addEventListener('visibilitychange', () => {
 function fotosHtml(l) {
   const f = fotoCache[l.id], st = fotoStand[l.id], rest = fotoRest[l.id] || [];
   const vorname = (l.name || '').split(' ')[0];
-  const wa = `${l.wa || 'https://wa.me/'}?text=${encodeURIComponent(`Hallo${vorname ? ' ' + vorname : ''}, hier sind die Fotos von deinem Auto: ${f?.ordner}`)}`;
+  const wa = waLink(l, `Hallo${vorname ? ' ' + vorname : ''}, hier sind die Fotos von deinem Auto: ${f?.ordner}`);
   return `${f?.fotos.length ? `<div class="fotos">${f.fotos.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener">${x.bild ? `<img src="${esc(x.bild)}" alt="${esc(x.name)}" loading="lazy">` : '<span>🖼️</span>'}</a>`).join('')}</div>` : ''}
     <p class="muted" style="margin:0 0 var(--gap)">${esc(st || (!f ? 'Fotos werden geladen…' : f.fotos.length ? `${f.fotos.length} ${f.fotos.length === 1 ? 'Foto' : 'Fotos'}` : 'Noch keine Fotos. Mach sie, wenn das Auto bei euch steht.'))}</p>
     <label class="pill wide">📷 Fotos hinzufügen<input type="file" accept="image/*" multiple hidden onchange="fotosHoch(${js(l.id)}, this.files)"></label>
     ${rest.length && !st ? `<button class="pill wide" onclick="fotosHoch(${js(l.id)}, fotoRest[${js(l.id)}])">↻ ${rest.length} nicht hochgeladene Fotos nochmal senden</button>` : ''}
-    ${f?.fotos.length ? `<div class="two" style="margin:0"><a class="pill" href="${esc(f.ordner)}" target="_blank" rel="noopener">📁 Ordner</a><a class="pill" href="${esc(wa)}" target="_blank" rel="noopener">📤 An Kunden</a></div>` : ''}`;
+    ${f?.fotos.length ? `<div class="two" style="margin:0"><a class="pill" href="${esc(f.ordner)}" target="_blank" rel="noopener">📁 Ordner</a><a class="pill" href="${esc(wa)}">📤 An Kunden</a></div>` : ''}`;
 }
 const zeigeFotos = id => { const l = leads.find(x => x.id === id); if (offen === id && l && $('#fotos')) $('#fotos').innerHTML = fotosHtml(l); };
 async function fotosLaden(id) {
@@ -446,13 +449,13 @@ const anrede = l => { const v = (l.name || '').split(' ')[0]; return `Hallo${v ?
 // Im Kundenfenster oben: Angebot erstellen, letztes Angebot verschicken, E-Mail und Adresse (gehen direkt nach Lexware)
 function kundeBlock(l) {
   const id = js(l.id), a = l.angebot, k = kundeCache[l.id] || l.kunde || {};
-  const wa = a?.pdf && l.wa ? `${l.wa}?text=${encodeURIComponent(`${anrede(l)}, hier ist dein Angebot ${a.nr} von JD Brüder: ${a.pdf}\nMeld dich gern, wenn du Fragen hast.`)}` : '';
+  const wa = a?.pdf && l.wa ? waLink(l, `${anrede(l)}, hier ist dein Angebot ${a.nr} von JD Brüder: ${a.pdf}\nMeld dich gern, wenn du Fragen hast.`) : '';
   const feld = (f, name, extra = '') => `<div class="row"><label for="k-${f}">${name}</label><input id="k-${f}" value="${esc(k[f] || '')}" autocomplete="off" onchange="kundeGeaendert(${id})"${extra}></div>`;
   // Neues Angebot: Knopf „Angebot“ in der festen Leiste unten, auch mitten im Telefonat ohne Scrollen
   return `${a ? `<div class="label">Letztes Angebot</div>
     <div class="card" id="angebotkarte">
       <p class="angebotzeile"><span><b>${esc(a.nr || 'Angebot')}</b> · ${euro(a.summe)}</span><span class="muted">${a.datum ? 'vom ' + datumKurz(a.datum) : ''}</span></p>
-      ${a.pdf ? `<div class="drei">${wa ? `<a class="pill" href="${esc(wa)}" target="_blank" rel="noopener" onclick="angebotGeschickt(${id}, 'WhatsApp')">${ICON.wa}WhatsApp</a>` : ''}<button class="pill" onclick="angebotMail(${id}, this)">✉️ Mail</button><a class="pill" href="${esc(a.pdf)}" target="_blank" rel="noopener">📄 PDF</a></div>`
+      ${a.pdf ? `<div class="drei">${wa ? `<a class="pill" href="${esc(wa)}" onclick="angebotGeschickt(${id}, 'WhatsApp')">${ICON.wa}WhatsApp</a>` : ''}<button class="pill" onclick="angebotMail(${id}, this)">✉️ Mail</button><a class="pill" href="${esc(a.pdf)}" target="_blank" rel="noopener">📄 PDF</a></div>`
         : `<a class="pill wide" style="margin:0" href="${esc(a.link)}" target="_blank" rel="noopener">Das PDF fehlt noch. In Lexware öffnen ↗</a>`}
     </div>` : ''}
     <div class="label">Kundendaten</div>
