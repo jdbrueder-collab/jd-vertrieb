@@ -34,7 +34,7 @@ function welt(props) {
     ['', '', '', '', '', '', 'Von Hand', '0171 4444444', 'Offen', '', ''],
   ]);
   const heim = blatt([['Link'], ['https://docs.google.com/spreadsheets/d/' + A + '/edit?usp=sharing', ''], ['https://docs.google.com/spreadsheets/d/' + KAPUTT + '/edit', 'Alt']]);
-  const feedback = [], cache = {}, pushes = [], drive = { ordner: [], geaendert: 1, weg: [] };
+  const feedback = [], cache = {}, pushes = [], mails = [], drive = { ordner: [], geaendert: 1, weg: [] };
   // Nachgebautes Lexware: merkt sich Anfragen, Antworten lassen sich vorgeben (z. B. 429)
   const lexware = { anfragen: [], naechste: [], vorhanden: [] };   // vorhanden: Kunden, die es in Lexware schon gibt
   const lexAntwort = (url, o) => {
@@ -98,6 +98,7 @@ function welt(props) {
       formatDate: (d, tz, f) => f === 'dd.MM.yy HH:mm' ? '20.11.26 14:03' : f.endsWith('XXX') ? d.toISOString().slice(0, 23) + '+01:00' : f === 'yyyy-MM-dd' ? d.toISOString().slice(0, 10) : f.startsWith('yyyy') ? d.toISOString().slice(0, 19) : 'Freitag',
       sleep: () => {},
     },
+    MailApp: { sendEmail: (m) => mails.push(m), getRemainingDailyQuota: () => 100 },
     ContentService: { createTextOutput: (t) => ({ t, setMimeType() { return this; } }), MimeType: { JSON: 'json' } },
     UrlFetchApp: { fetch: (url, o) => {
       if (url.startsWith('https://api.lexware.io')) return lexAntwort(url, o);
@@ -113,7 +114,7 @@ function welt(props) {
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(__dirname + '/apps-script/vertrieb.gs', 'utf8'), ctx);
   const post = (d) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(d) } }).t);
-  return { post, ctx, lexware, props, pushes, drive, aendern: () => drive.geaendert++, lead: lead.rows, heim: heim.rows, feedback, cache, claude: () => claudeBody };
+  return { post, ctx, lexware, mails, props, pushes, drive, aendern: () => drive.geaendert++, lead: lead.rows, heim: heim.rows, feedback, cache, claude: () => claudeBody };
 }
 
 const w = welt({ TEAM_PASSWORT: 'geheim', ANTHROPIC_API_KEY: 'sk-ant-api-test', PUSH_GEHEIMNIS: 'push-geheim' });
@@ -359,6 +360,17 @@ assert.ok(JSON.parse(w.props['ANGEBOT_' + anna]).gesendet);
 r = w.post({ aktion: 'gesendet', pw, id: anna, weg: 'Mail' });
 assert.strictEqual(r.nachfassen, '');                     // Termin steht schon, wird nicht verschoben
 assert.strictEqual(w.post({ aktion: 'gesendet', pw, id: ben, weg: 'Mail' }).code, 'weg');   // Ben hat kein Angebot
+// Per Mail aus dem Gmail-Konto des Skripts: PDF frisch aus Lexware im Anhang, Vermerk mit Empfänger
+assert.strictEqual(w.post({ aktion: 'angebotMail', pw, id: anna, email: 'kaputt' }).code, 'email');
+assert.strictEqual(w.post({ aktion: 'angebotMail', pw, id: ben, email: 'ben@example.de' }).code, 'weg');   // kein Angebot
+r = w.post({ aktion: 'angebotMail', pw, wer: 'David', id: anna, email: 'anna@example.de' });
+assert.ok(r.ok, r.fehler);
+const m = w.mails.pop();
+assert.strictEqual(JSON.stringify([m.to, m.name, m.subject]), '["anna@example.de","JD Brüder","Dein Angebot AG0049 von JD Brüder"]');
+assert.strictEqual(m.attachments[0].name, 'Angebot AG0049.pdf');
+assert.match(m.body, /^Hallo Anna,\n\nim Anhang findest du dein Angebot AG0049\.[\s\S]*Viele Grüße\nDavid\nJD Brüder$/);
+assert.match(r.lead.notizen, /David: Angebot AG0049 per Mail an anna@example\.de geschickt$/);
+
 // Morgens fällig: Angebote zum Nachfassen erkennbar
 w.lead.find((z) => z[6] === 'Anna Alt')[10] = new Date('2026-01-02T12:00:00Z');
 w.props.PUSH_ABOS = JSON.stringify([abo]); w.drive.weg = []; w.pushes.length = 0;

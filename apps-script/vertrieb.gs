@@ -26,6 +26,7 @@ const MUELL = new Set(TECHNIK.concat(['CREATED', 'email'])); // was Meta beim Ei
 // Kundendaten aus dem Meta-Formular (falls abgefragt). Stehen im Kundenbereich der App, nicht bei den Antworten.
 const KUNDENFELDER = { email: ['email', 'e-mail', 'e_mail'], strasse: ['street_address', 'straße', 'strasse', 'adresse'],
   plz: ['post_code', 'zip_code', 'zip', 'postleitzahl', 'plz'], ort: ['city', 'stadt', 'ort', 'wohnort'] };
+const MAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const KI_EINTRAG = /^\d\d\.\d\d\.\d\d \d\d:\d\d KI: /;
 const AKTIV = ['Neu', 'Offen', 'Nicht erreicht', 'Zurückrufen', 'Terminiert']; // wie in der App
 const APP_URL = 'https://jdbrueder-collab.github.io/jd-vertrieb/';
@@ -42,7 +43,7 @@ function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
     pruefe(d.pw);
-    const aktion = { liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos, vorlage, lexArtikel, lexDaten, lexAngebot, gesendet, artikelAus, nachziehen }[d.aktion];
+    const aktion = { liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos, vorlage, lexArtikel, lexDaten, lexAngebot, gesendet, angebotMail, artikelAus, nachziehen }[d.aktion];
     if (!aktion) throw fehler('aktion', 'Unbekannte Aktion.');
     out = Object.assign({ ok: true }, aktion(d));
   } catch (err) {
@@ -325,6 +326,7 @@ function vertriebEinrichten() {
   ScriptApp.newTrigger('meldeNeueLeads').timeBased().everyMinutes(1).create();
   ScriptApp.newTrigger('meldeFaellige').timeBased().atHour(8).nearMinute(0).everyDays(1).inTimezone('Europe/Berlin').create();
   DriveApp.getRootFolder(); // damit Google die Drive-Berechtigung für die Fotos gleich mit abfragt
+  MailApp.getRemainingDailyQuota(); // und das Senden von Angeboten per Mail aus diesem Google-Konto
   meldeNeueLeads();
 }
 
@@ -506,7 +508,7 @@ function artikelAus(d) {
 function kundeAus(d) {
   const f = (k, n) => String(d[k] || '').trim().slice(0, n);
   const k = { email: f('email', 100), strasse: f('strasse', 100), plz: f('plz', 10), ort: f('ort', 100) };
-  if (k.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(k.email)) throw fehler('email', 'Die E-Mail-Adresse sieht nicht richtig aus.');
+  if (k.email && !MAIL_OK.test(k.email)) throw fehler('email', 'Die E-Mail-Adresse sieht nicht richtig aus.');
   return k;
 }
 // Kundendaten in einen Lexware-Kontakt schreiben (Lexware erlaubt je Liste nur einen Eintrag)
@@ -652,7 +654,8 @@ function gesendet(d) {
   const { t, zeile } = finde(d.id), l = leseZeile(t, zeile);
   const nach = ['Neu', 'Offen', 'Nicht erreicht', 'Zurückrufen'].includes(l.status) && (!l.naechster || l.naechster < heute)
     ? berlin(new Date(Date.now() + 3 * 864e5), 'yyyy-MM-dd') : undefined;
-  return Object.assign(speichern({ id: d.id, wer: d.wer, notiz: 'Angebot ' + a.nr + ' per ' + weg + ' geschickt', naechster: nach }), { angebot: a, nachfassen: nach || '' });
+  const notiz = 'Angebot ' + a.nr + ' per ' + weg + (d.an ? ' an ' + d.an : '') + ' geschickt';
+  return Object.assign(speichern({ id: d.id, wer: d.wer, notiz, naechster: nach }), { angebot: a, nachfassen: nach || '' });
 }
 
 // Offene Leads, die noch kein Kunde in Lexware sind, nachträglich anlegen. Pro Aufruf höchstens 25 Sekunden,
@@ -666,4 +669,21 @@ function nachziehen() {
     n++;
   }
   return { angelegt: n, rest: offen.length - n };
+}
+
+// Angebot per Mail aus dem Google-Konto, unter dem das Skript läuft (jd.brueder@gmail.com), mit dem PDF im Anhang.
+// Gmail erlaubt so rund 100 Empfänger am Tag.
+function angebotMail(d) {
+  const a = JSON.parse(props().getProperty('ANGEBOT_' + d.id) || 'null');
+  if (!a) throw fehler('weg', 'Zu diesem Lead gibt es noch kein Angebot.');
+  const email = String(d.email || '').trim();
+  if (!MAIL_OK.test(email)) throw fehler('email', 'Trag erst eine gültige E-Mail-Adresse ein.');
+  const { t, zeile } = finde(d.id), vorname = (leseZeile(t, zeile).name || '').split(' ')[0];
+  const pdf = lex('/v1/quotations/' + a.link.split('/').pop() + '/file', null, 'get', true).setName('Angebot ' + a.nr + '.pdf');
+  MailApp.sendEmail({
+    to: email, name: 'JD Brüder', subject: 'Dein Angebot ' + a.nr + ' von JD Brüder', attachments: [pdf],
+    body: 'Hallo' + (vorname ? ' ' + vorname : '') + ',\n\nim Anhang findest du dein Angebot ' + a.nr + '.\n\nMeld dich gern, wenn du Fragen hast.\n\nViele Grüße\n'
+      + (String(d.wer || '').trim() || 'Dein Team') + '\nJD Brüder',
+  });
+  return gesendet(Object.assign({}, d, { weg: 'Mail', an: email }));
 }

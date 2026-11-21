@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '19';
+const VERSION = '20';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -452,7 +452,7 @@ function kundeBlock(l) {
   return `${a ? `<div class="label">Letztes Angebot</div>
     <div class="card" id="angebotkarte">
       <p class="angebotzeile"><span><b>${esc(a.nr || 'Angebot')}</b> · ${euro(a.summe)}</span><span class="muted">${a.datum ? 'vom ' + datumKurz(a.datum) : ''}</span></p>
-      ${a.pdf ? `<div class="drei">${wa ? `<a class="pill" href="${esc(wa)}" target="_blank" rel="noopener" onclick="angebotGeschickt(${id}, 'WhatsApp')">${ICON.wa}WhatsApp</a>` : ''}<button class="pill" onclick="angebotMail(${id})">✉️ Mail</button><a class="pill" href="${esc(a.pdf)}" target="_blank" rel="noopener">📄 PDF</a></div>`
+      ${a.pdf ? `<div class="drei">${wa ? `<a class="pill" href="${esc(wa)}" target="_blank" rel="noopener" onclick="angebotGeschickt(${id}, 'WhatsApp')">${ICON.wa}WhatsApp</a>` : ''}<button class="pill" onclick="angebotMail(${id}, this)">✉️ Mail</button><a class="pill" href="${esc(a.pdf)}" target="_blank" rel="noopener">📄 PDF</a></div>`
         : `<a class="pill wide" style="margin:0" href="${esc(a.link)}" target="_blank" rel="noopener">Das PDF fehlt noch. In Lexware öffnen ↗</a>`}
     </div>` : ''}
     <div class="label">Kundendaten</div>
@@ -489,12 +489,19 @@ function angebotGeschickt(id, weg) {
     leadNeu(id); render();
   }).catch(e => toast(e.message));
 }
-function angebotMail(id) {
+// Mail geht direkt aus dem Gmail-Konto von JD Brüder raus (das Google-Skript sendet), mit dem PDF im Anhang
+async function angebotMail(id, knopf) {
   const l = leads.find(x => x.id === id), a = l?.angebot, email = ($('#k-email')?.value || kundeCache[id]?.email || '').trim();
   if (!a) return;
   if (!MAIL_OK.test(email)) { toast('Trag erst die E-Mail-Adresse ein.'); return $('#k-email')?.focus(); }
-  location.href = `mailto:${email}?subject=${encodeURIComponent(`Dein Angebot ${a.nr} von JD Brüder`)}&body=${encodeURIComponent(`${anrede(l)},\n\nhier ist dein Angebot ${a.nr}:\n${a.pdf}\n\nMeld dich gern, wenn du Fragen hast.\n\nViele Grüße\n${konto.name || 'JD Brüder'}\nJD Brüder`)}`;
-  angebotGeschickt(id, 'Mail');
+  if (!confirm(`Angebot ${a.nr} jetzt per Mail an ${email} senden? Das PDF hängt an.`)) return;
+  knopf.disabled = true; knopf.textContent = 'Sendet…';
+  try {
+    const j = await api('angebotMail', { id, email });
+    Object.assign(l, j.lead, { angebot: j.angebot });
+    toast(`Angebot ${a.nr} an ${email} gesendet.${j.nachfassen ? ` Nachfassen am ${datumKurz(j.nachfassen)} steht drin.` : ''}`);
+  } catch (e) { toast(e.message); }
+  leadNeu(id); render();
 }
 async function lexPruefen() {
   try { const j = await api('lexArtikel'); lexArtikelCache = j.artikel.filter(x => !x.aus); toast(`Lexware verbunden: ${j.firma}, ${j.artikel.length} Artikel`); }
@@ -816,6 +823,10 @@ function demoApi(aktion, d) {
       ['a3', 'Interieur Aufbereitung', 226.1, 'Stück'], ['a4', 'Lackaufbereitung One-Step-Politur', 380.8, 'Aufwand'], ['a5', 'Polierarbeiten', 65.45, 'Stunde'],
       ['a6', 'Reinigung & Pflege von Ledersitzen', 41.65, 'Stück'], ['a7', '2 Stufen Keramikversiegelung', 714, 'Stück']].map(([id, name, preis, einheit]) => ({ id, name, preis, einheit }));
     if (aktion === 'lexArtikel') return ok({ firma: 'JD Brüder (Demo)', artikel: artikel.map(a => ({ ...a, aus: (window.DEMO_AUS || []).includes(a.id) })) });
+    if (aktion === 'angebotMail') {
+      vermerk(`Angebot ${l.angebot.nr} per Mail an ${d.email} geschickt`); l.angebot.gesendet = heute();
+      return ok({ lead: kopie(l), angebot: l.angebot, nachfassen: '' });
+    }
     if (aktion === 'gesendet') {
       vermerk(`Angebot ${l.angebot.nr} per ${d.weg} geschickt`); l.angebot.gesendet = heute();
       const nach = !l.naechster ? ymd(new Date(Date.now() + 3 * 864e5)) : '';
