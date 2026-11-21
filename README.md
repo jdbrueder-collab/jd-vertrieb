@@ -48,11 +48,13 @@ Wer beim Lead den Status auf *Nicht erreicht* setzt, bekommt die Frage „Per Wh
 
 Ist `LEXWARE_API_KEY` hinterlegt (Skripteigenschaft im Google-Skript), passiert Folgendes:
 
-- **Jede neue Anfrage wird sofort Kunde in Lexware**, mit Name, Handynummer, Interesse und Fahrzeug als Notiz, dazu E-Mail und Adresse, falls das Meta-Formular sie abfragt (Felder `email`, `street_address`, `post_code`/`zip_code`, `city`). Das Skript merkt sich die Kontakt-id (`LEX_<Lead-id>`), ein Kunde entsteht nie doppelt. Ältere Leads werden beim ersten Angebot oder bei den ersten Kundendaten angelegt.
+- **Jede neue Anfrage wird sofort Kunde in Lexware**, mit Name, Handynummer, Interesse und Fahrzeug als Notiz, dazu E-Mail und Adresse, falls das Meta-Formular sie abfragt (Felder `email`, `street_address`, `post_code`/`zip_code`, `city`). Das Skript merkt sich die Kontakt-id (`LEX_<Lead-id>`). Gibt es in Lexware schon einen Kunden mit gleichem Nachnamen **und** gleicher Handynummer oder E-Mail, wird er verknüpft statt doppelt angelegt (nur der Name reicht nicht). Ältere offene Leads holt *Setup → Lexware → Offene Leads ohne Kunde* nach.
 - **Kundendaten im Kundenfenster:** E-Mail, Straße, PLZ und Ort lassen sich im Telefonat eintragen. Sie gehen beim Verlassen des Feldes direkt nach Lexware. Leere Felder ändern dort nichts.
 - **Angebot** (Knopf in der festen Leiste unten, auch mitten im Telefonat): oben steht, was im Angebot ist, darunter alle Artikel aus Lexware mit Suche, dazu eigene Positionen. **Rabatt:** *Referenz 20 %* ist bei Leads mit Interesse Referenzauto schon an, sonst ein eigener Prozentsatz. Das Angebot steht dann als Gesamtrabatt drin, bei Referenz mit einem Satz in der Einleitung.
 - *Angebot erstellen* legt es **fertig** in Lexware an (mit Nummer, 30 Tage gültig, eure Standardtexte, Fahrzeug in der Einleitung). Artikelpreise kommen frisch aus Lexware, eigene Positionen sind Endpreise. Das PDF landet im Drive-Ordner des Kunden (per Link sichtbar).
 - **Verschicken:** Unter *Letztes Angebot* öffnet *WhatsApp* den Chat mit fertigem Text und PDF-Link, *Mail* die Mail-App mit Betreff und Link (dafür muss die E-Mail eingetragen sein). Im Verlauf landet jeweils ein Vermerk. Das letzte Angebot merkt sich das Skript in `ANGEBOT_<Lead-id>`.
+- **Nachfassen:** Ist beim Verschicken noch kein Rückruf geplant (und der Lead nicht terminiert, beauftragt oder unqualifiziert), trägt das Skript den Termin in 3 Tagen ein. An dem Tag steht der Lead unter *Fällig* mit „Angebot … nachfassen“, und die 8-Uhr-Nachricht nennt ihn.
+- **Artikel im Angebot:** Unter *Setup → Lexware → Artikel im Angebot* legt ihr fest, welche Lexware-Artikel in der App erscheinen (z. B. ohne Bauleistungen). Gilt fürs ganze Team (`ARTIKEL_AUS`), neue Artikel sind erst mal sichtbar.
 - Pakete und Preise pflegt ihr in Lexware unter *Artikel*. *Setup → Lexware → Prüfen* zeigt, ob der Schlüssel funktioniert.
 
 ## Design

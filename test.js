@@ -36,7 +36,7 @@ function welt(props) {
   const heim = blatt([['Link'], ['https://docs.google.com/spreadsheets/d/' + A + '/edit?usp=sharing', ''], ['https://docs.google.com/spreadsheets/d/' + KAPUTT + '/edit', 'Alt']]);
   const feedback = [], cache = {}, pushes = [], drive = { ordner: [], geaendert: 1, weg: [] };
   // Nachgebautes Lexware: merkt sich Anfragen, Antworten lassen sich vorgeben (z. B. 429)
-  const lexware = { anfragen: [], naechste: [] };
+  const lexware = { anfragen: [], naechste: [], vorhanden: [] };   // vorhanden: Kunden, die es in Lexware schon gibt
   const lexAntwort = (url, o) => {
     const body = o.payload ? JSON.parse(o.payload) : null, pfad = url.replace('https://api.lexware.io', '');
     lexware.anfragen.push({ pfad, methode: o.method, auth: o.headers.Authorization, accept: o.headers.Accept, body });
@@ -49,6 +49,7 @@ function welt(props) {
       { id: 'A1', title: 'Interieur Aufbereitung', type: 'SERVICE', unitName: 'Stück', description: 'Sitze, Teppich, Himmel', price: { netPrice: 190, leadingPrice: 'NET', taxRate: 19 } },
       { id: 'A4', title: 'Auftragspauschale', type: 'PRODUCT', unitName: 'Stück', price: { netPrice: 58, grossPrice: 58, leadingPrice: 'NET', taxRate: 0 } },
       { id: 'A3', title: 'Alt', type: 'PRODUCT', archived: true, price: {} }] };
+    else if (pfad.startsWith('/v1/contacts?')) j = { content: lexware.vorhanden.filter((c) => c.person.lastName === decodeURIComponent(pfad.split('name=')[1])) };
     else if (pfad === '/v1/contacts' && o.method === 'post') { lexware.kontakt = Object.assign({}, body, { id: 'K-1', version: 1 }); j = { id: 'K-1', version: 1 }; }
     else if (pfad === '/v1/contacts/K-1' && o.method === 'get') j = JSON.parse(JSON.stringify(lexware.kontakt));
     else if (pfad === '/v1/contacts/K-1' && o.method === 'put') { lexware.kontakt = Object.assign(body, { version: body.version + 1 }); j = { id: 'K-1' }; }
@@ -94,7 +95,7 @@ function welt(props) {
       getUuid: () => 'abcdef12-0000',
       newBlob: (bytes, typ, name) => ({ bytes, typ, name }),
       base64Decode: (t) => Array.from(Buffer.from(t, 'base64')), base64Encode: (b) => Buffer.from(b).toString('base64'),
-      formatDate: (d, tz, f) => f === 'dd.MM.yy HH:mm' ? '20.11.26 14:03' : f.endsWith('XXX') ? d.toISOString().slice(0, 23) + '+01:00' : f.startsWith('yyyy') ? d.toISOString().slice(0, 19) : 'Freitag',
+      formatDate: (d, tz, f) => f === 'dd.MM.yy HH:mm' ? '20.11.26 14:03' : f.endsWith('XXX') ? d.toISOString().slice(0, 23) + '+01:00' : f === 'yyyy-MM-dd' ? d.toISOString().slice(0, 10) : f.startsWith('yyyy') ? d.toISOString().slice(0, 19) : 'Freitag',
       sleep: () => {},
     },
     ContentService: { createTextOutput: (t) => ({ t, setMimeType() { return this; } }), MimeType: { JSON: 'json' } },
@@ -276,7 +277,8 @@ w.lexware.anfragen.length = 0;
 r = w.post({ aktion: 'lexDaten', pw, id: anna, speichern: true, email: 'anna@example.de', strasse: 'Hauptstr. 5', plz: '56305', ort: 'Puderbach' });
 assert.ok(r.ok, r.fehler);
 assert.strictEqual(r.lex, 'K-1');
-let k = w.lexware.anfragen[0].body;
+assert.match(w.lexware.anfragen[0].pfad, /^\/v1\/contacts\?customer=true&size=100&name=Alt$/);   // erst nach Dubletten schauen
+let k = w.lexware.anfragen[1].body;
 assert.strictEqual(JSON.stringify(k.person), '{"firstName":"Anna","lastName":"Alt"}');
 assert.strictEqual(k.phoneNumbers.mobile[0], '0171 1111111');
 assert.strictEqual(JSON.stringify(k.emailAddresses), '{"private":["anna@example.de"]}');
@@ -332,6 +334,38 @@ const neuK = w.lexware.anfragen.filter((x) => x.pfad === '/v1/contacts');
 assert.strictEqual(neuK.length, vorher + 1);
 assert.strictEqual(neuK.pop().body.emailAddresses.private[0], 'fritz@example.de');
 assert.ok(w.props['LEX_' + A + '~l:6']);
+
+// Verschickt: Vermerk, Datum am Angebot, Nachfassen in 3 Tagen (Anna ist „Zurückrufen“ ohne Termin)
+Object.assign(w.lead.find((z) => z[6] === 'Anna Alt'), { 8: 'Zurückrufen', 10: '' });
+r = w.post({ aktion: 'gesendet', pw, wer: 'David', id: anna, weg: 'WhatsApp' });
+assert.ok(r.ok, r.fehler);
+assert.match(r.lead.notizen, /David: Angebot AG0049 per WhatsApp geschickt$/);
+assert.strictEqual(r.nachfassen, r.lead.naechster);
+assert.ok(r.nachfassen > new Date().toISOString().slice(0, 10));
+assert.ok(JSON.parse(w.props['ANGEBOT_' + anna]).gesendet);
+r = w.post({ aktion: 'gesendet', pw, id: anna, weg: 'Mail' });
+assert.strictEqual(r.nachfassen, '');                     // Termin steht schon, wird nicht verschoben
+assert.strictEqual(w.post({ aktion: 'gesendet', pw, id: ben, weg: 'Mail' }).code, 'weg');   // Ben hat kein Angebot
+// Morgens fällig: Angebote zum Nachfassen erkennbar
+w.lead.find((z) => z[6] === 'Anna Alt')[10] = new Date('2026-01-02T12:00:00Z');
+w.props.PUSH_ABOS = JSON.stringify([abo]); w.drive.weg = []; w.pushes.length = 0;
+w.ctx.meldeFaellige();
+assert.match(w.pushes[0].body.body, /Anna Alt \(Angebot nachfassen\)/);
+
+// Artikel ausblenden (z. B. Bauleistungen), gilt fürs ganze Team
+assert.ok(w.post({ aktion: 'artikelAus', pw, aus: ['A2', 'bös<script>'] }).ok);
+assert.strictEqual(w.props.ARTIKEL_AUS, '["A2"]');
+assert.strictEqual(JSON.stringify(w.post({ aktion: 'lexArtikel', pw }).artikel.map((a) => [a.id, a.aus])), '[["A4",false],["A1",false],["A2",true]]');
+
+// Dubletten: gleicher Nachname UND gleiche Nummer wird verknüpft, nur gleicher Name nicht
+w.lexware.vorhanden.push({ id: 'K-ALT', person: { lastName: 'Frisch' }, phoneNumbers: { mobile: ['0171 3333333'] } });
+w.lexware.anfragen.length = 0;
+r = w.post({ aktion: 'nachziehen', pw });
+assert.ok(r.ok, r.fehler);
+assert.strictEqual(JSON.stringify([r.angelegt, r.rest]), '[5,0]');      // Dora, Cora, Ben, Eva, Von Hand
+assert.strictEqual(w.props['LEX_' + A + '~l:3'], 'K-ALT');               // Cora Frisch gab es schon (gleiche Nummer)
+assert.strictEqual(w.lexware.anfragen.filter((x) => x.pfad === '/v1/contacts').length, 4);   // Cora nicht neu
+assert.strictEqual(JSON.stringify(w.post({ aktion: 'nachziehen', pw })), '{"ok":true,"angelegt":0,"rest":0}');
 
 // Fehler von Lexware lesbar, falscher Schlüssel erklärt
 w.lexware.naechste.push(null, { code: 406, body: { status: 406, details: [{ field: 'lineItems[0].unitPrice', violation: 'NOTNULL' }] } });

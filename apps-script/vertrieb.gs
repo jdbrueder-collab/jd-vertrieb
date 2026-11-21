@@ -42,7 +42,7 @@ function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
     pruefe(d.pw);
-    const aktion = { liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos, vorlage, lexArtikel, lexDaten, lexAngebot }[d.aktion];
+    const aktion = { liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos, vorlage, lexArtikel, lexDaten, lexAngebot, gesendet, artikelAus, nachziehen }[d.aktion];
     if (!aktion) throw fehler('aktion', 'Unbekannte Aktion.');
     out = Object.assign({ ok: true }, aktion(d));
   } catch (err) {
@@ -390,7 +390,7 @@ function meldeNeueLeads() {
 function meldeFaellige() {
   const heute = berlin(new Date(), 'yyyy-MM-dd');
   const f = liste().leads.filter((l) => AKTIV.includes(l.status) && l.naechster && l.naechster <= heute);
-  if (f.length) sende('☎️ Heute fällig: ' + f.length, f.map((l) => l.name || l.telefon).join(', '), APP_URL);
+  if (f.length) sende('☎️ Heute fällig: ' + f.length, f.map((l) => (l.name || l.telefon) + (l.angebot && l.angebot.gesendet ? ' (Angebot nachfassen)' : '')).join(', '), APP_URL);
 }
 
 // ---------- Fotos ----------
@@ -489,10 +489,17 @@ const euro = (n) => (Number(n) || 0).toFixed(2).replace('.', ',') + ' €';
 
 // Artikel für die App, mit Endpreis (so wie der Kunde zahlt)
 function lexArtikel() {
-  const p = lexProfil();
-  const artikel = lexArtikelRoh().map((a) => ({ id: a.id, name: String(a.title || '').trim(), einheit: a.unitName || 'Stück', preis: p.ohneSteuer ? (a.price || {}).netPrice || 0 : lexBrutto(a.price || {}) }));
+  const p = lexProfil(), aus = new Set(JSON.parse(props().getProperty('ARTIKEL_AUS') || '[]'));
+  const artikel = lexArtikelRoh().map((a) => ({ id: a.id, name: String(a.title || '').trim(), einheit: a.unitName || 'Stück', preis: p.ohneSteuer ? (a.price || {}).netPrice || 0 : lexBrutto(a.price || {}), aus: aus.has(a.id) }));
   artikel.sort((a, b) => a.name.localeCompare(b.name, 'de'));
   return { firma: p.firma, artikel };
+}
+
+// Welche Artikel in der App nicht erscheinen (z. B. Bauleistungen). Gilt fürs ganze Team, neue Artikel sind erst mal sichtbar.
+function artikelAus(d) {
+  const aus = (Array.isArray(d.aus) ? d.aus : []).map(String).filter((x) => /^[\w-]{1,64}$/.test(x)).slice(0, 1000);
+  props().setProperty('ARTIKEL_AUS', JSON.stringify(aus));
+  return { aus };
 }
 
 // E-Mail und Adresse prüfen. Leere Felder ändern in Lexware nichts.
@@ -528,6 +535,8 @@ function lexKontakt(appId, l, k) {
   try {
     if (props().getProperty(key)) return props().getProperty(key);
     const teile = (l.name || 'Ohne Namen').trim().split(/\s+/), nachname = teile.pop();
+    const da = lexSuche(nachname, l.telefon, (k || l.kunde || {}).email);   // gibt es den Kunden schon? Dann verknüpfen statt doppelt anlegen
+    if (da) { props().setProperty(key, da); return da; }
     const kontakt = { version: 0, roles: { customer: {} }, person: { firstName: teile.join(' ') || undefined, lastName: nachname },
       note: ('Aus JD Vertrieb. ' + l.antworten.map((a) => a.join(': ')).join(', ')).slice(0, 1000) };
     if (l.telefon) kontakt.phoneNumbers = { mobile: [l.telefon] };
@@ -538,6 +547,17 @@ function lexKontakt(appId, l, k) {
   } finally {
     lock.releaseLock();
   }
+}
+
+// Bestehender Kunde mit gleichem Nachnamen UND gleicher Handynummer oder E-Mail. Nur der Name reicht nicht,
+// sonst landet ein Angebot beim falschen Thomas Müller.
+function lexSuche(nachname, telefon, email) {
+  if (nachname.length < 3) return '';
+  const ziffern = (x) => String(x || '').replace(/\D/g, '').slice(-9), tel = ziffern(telefon), mail = String(email || '').toLowerCase();
+  const treffer = (lex('/v1/contacts?customer=true&size=100&name=' + encodeURIComponent(nachname)).content || []).find((c) =>
+    (tel.length === 9 && Object.values(c.phoneNumbers || {}).flat().some((n) => ziffern(n) === tel))
+    || (mail && Object.values(c.emailAddresses || {}).flat().some((m) => String(m).toLowerCase() === mail)));
+  return treffer ? treffer.id : '';
 }
 
 // Kundendaten lesen (ohne speichern) oder in Lexware speichern. Gibt es den Kunden noch nicht, wird er angelegt.
@@ -608,4 +628,31 @@ function lexAngebot(d) {
   const notiz = 'Angebot ' + (angebot.nr || '') + ' erstellt (' + euro(angebot.summe) + (rabatt ? ', ' + rabattText + ' Rabatt' : '') + '): '
     + posten.map((x) => (x.menge === 1 ? '' : String(x.menge).replace('.', ',') + '× ') + x.name).join(', ');
   return Object.assign(speichern({ id: d.id, wer: d.wer, notiz: notiz.replace('Angebot  ', 'Angebot ') }), { lex: kontakt, angebot });
+}
+
+// Angebot verschickt: vermerken und, falls noch kein Rückruf geplant ist, in 3 Tagen nachfassen.
+// Dann steht der Lead an dem Tag unter „Fällig“, und die 8-Uhr-Nachricht erinnert daran.
+function gesendet(d) {
+  const key = 'ANGEBOT_' + d.id, a = JSON.parse(props().getProperty(key) || 'null');
+  if (!a) throw fehler('weg', 'Zu diesem Lead gibt es noch kein Angebot.');
+  const weg = d.weg === 'Mail' ? 'Mail' : 'WhatsApp', heute = berlin(new Date(), 'yyyy-MM-dd');
+  a.gesendet = heute;
+  props().setProperty(key, JSON.stringify(a));
+  const { t, zeile } = finde(d.id), l = leseZeile(t, zeile);
+  const nach = ['Neu', 'Offen', 'Nicht erreicht', 'Zurückrufen'].includes(l.status) && (!l.naechster || l.naechster < heute)
+    ? berlin(new Date(Date.now() + 3 * 864e5), 'yyyy-MM-dd') : undefined;
+  return Object.assign(speichern({ id: d.id, wer: d.wer, notiz: 'Angebot ' + a.nr + ' per ' + weg + ' geschickt', naechster: nach }), { angebot: a, nachfassen: nach || '' });
+}
+
+// Offene Leads, die noch kein Kunde in Lexware sind, nachträglich anlegen. Pro Aufruf höchstens 25 Sekunden,
+// die App ruft so lange nach, bis nichts mehr übrig ist.
+function nachziehen() {
+  const offen = liste().leads.filter((l) => AKTIV.includes(l.status) && !l.lex), start = Date.now();
+  let n = 0;
+  for (const l of offen) {
+    if (Date.now() - start > 25000) break;
+    lexKontakt(l.id, l);
+    n++;
+  }
+  return { angelegt: n, rest: offen.length - n };
 }

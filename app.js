@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '17';
+const VERSION = '18';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -114,7 +114,7 @@ const wunsch = l => (l.antworten.find(a => a[0] === 'Interesse') || l.antworten[
 const waText = l => vorlage.replaceAll('{Name}', (l.name || '').split(' ')[0]).replaceAll('{Wunsch}', wunsch(l) || 'Fahrzeugaufbereitung')
   .replaceAll('{Ich}', konto.name || 'das Team').replace(/ +,/g, ',');
 function leadZeile(l) {
-  const info = wunsch(l) || l.telefon;
+  const info = faellig(l) && l.angebot?.gesendet ? `Angebot ${l.angebot.nr} nachfassen` : wunsch(l) || l.telefon;
   return `<div class="lead">
     <button class="open" onclick="openLead(${js(l.id)})"><span class="dot" style="--c:${STATUS[l.status] || STATUS.Neu}"></span>
       <span class="tt"><b>${esc(l.name || 'Ohne Namen')}</b><span>${esc(info)}</span></span>${wann(l)}</button>
@@ -185,12 +185,16 @@ function renderSetup() {
     <textarea id="vorlage" aria-label="WhatsApp-Nachricht" onchange="vorlageSpeichern(this)">${esc(vorlage)}</textarea>
     <p class="hint">{Name} wird zum Vornamen des Kunden, {Wunsch} zu dem, was er will, {Ich} zu deinem Namen. {Name} und {Wunsch} müssen drinbleiben. Gilt fürs ganze Team.</p>
     <p class="hint">Vorschau: ${esc(waText({ name: 'Kevin', antworten: [['Interesse', 'Referenzauto']] }))}</p>
+    <div class="label">Lexware</div>
+    <div class="group">${lexAn ? `<button class="row" onclick="lexPruefen()"><span>🧾 Verbindung</span><span>Prüfen ›</span></button>
+      <button class="row" onclick="artikelWahl()"><span>Artikel im Angebot</span><span>Auswählen ›</span></button>
+      ${ohneKunde().length ? `<button class="row" onclick="nachziehen(this)"><span>Offene Leads ohne Kunde</span><span>${ohneKunde().length} anlegen ›</span></button>` : ''}`
+      : '<div class="row"><span>🧾 Lexware</span><span class="muted">Nicht verbunden</span></div>'}</div>
     <div class="label">App</div>
     <div class="group">
       <button class="row" onclick="installHilfe()"><span>📲 Auf den Startbildschirm</span><span>›</span></button>
       ${pushOk() ? `<button class="row" onclick="pushEin()"><span>🔔 Benachrichtigungen</span><span>${Notification.permission === 'granted' ? 'An' : 'Einschalten ›'}</span></button>`
         : '<div class="row"><span>🔔 Benachrichtigungen</span><span class="muted">Erst auf den Startbildschirm</span></div>'}
-      ${lexAn ? '<button class="row" onclick="lexPruefen()"><span>🧾 Lexware</span><span>Prüfen ›</span></button>' : '<div class="row"><span>🧾 Lexware</span><span class="muted">Nicht verbunden</span></div>'}
       <div class="row"><span>Version</span><span>${VERSION}</span></div>
     </div>
     ${DEMO ? '' : '<button class="pill wide" style="color:var(--minus);margin-top:var(--gap-l)" onclick="abmelden()">Abmelden</button>'}`;
@@ -477,10 +481,13 @@ function kundeGeaendert(id) {
     } catch (e) { toast(e.message); }
   }, 800);
 }
+// Verschickt: Vermerk im Verlauf, und ohne geplanten Rückruf trägt das Skript Nachfassen in 3 Tagen ein
 function angebotGeschickt(id, weg) {
-  const nr = leads.find(x => x.id === id)?.angebot?.nr || '';
-  api('speichern', { id, notiz: `Angebot ${nr} per ${weg} geschickt` })
-    .then(j => { Object.assign(leads.find(x => x.id === id) || {}, j.lead); leadNeu(id); }).catch(e => toast(e.message));
+  api('gesendet', { id, weg }).then(j => {
+    Object.assign(leads.find(x => x.id === id) || {}, j.lead, { angebot: j.angebot });
+    toast(j.nachfassen ? `Vermerkt. Nachfassen am ${datumKurz(j.nachfassen)} steht drin.` : 'Versand vermerkt');
+    leadNeu(id); render();
+  }).catch(e => toast(e.message));
 }
 function angebotMail(id) {
   const l = leads.find(x => x.id === id), a = l?.angebot, email = ($('#k-email')?.value || kundeCache[id]?.email || '').trim();
@@ -490,9 +497,42 @@ function angebotMail(id) {
   angebotGeschickt(id, 'Mail');
 }
 async function lexPruefen() {
-  try { const j = await api('lexArtikel'); lexArtikelCache = j.artikel; toast(`Lexware verbunden: ${j.firma}, ${j.artikel.length} Artikel`); }
+  try { const j = await api('lexArtikel'); lexArtikelCache = j.artikel.filter(x => !x.aus); toast(`Lexware verbunden: ${j.firma}, ${j.artikel.length} Artikel`); }
   catch (e) { toast(e.message); }
 }
+// Setup: welche Lexware-Artikel im Angebot erscheinen (gilt fürs ganze Team). Schalter speichern sofort.
+let artikelAlle = [];
+async function artikelWahl() {
+  sheet(`<div class="sheet-head"><span></span><h2>Artikel</h2><button class="pill" onclick="closeSheet()">Fertig</button></div><div class="card muted" id="awahl">Artikel werden aus Lexware geladen…</div>`);
+  try { artikelAlle = (await api('lexArtikel')).artikel; } catch (e) { return $('#awahl') && ($('#awahl').textContent = e.message); }
+  if (!$('#awahl')) return;
+  $('.panel').innerHTML = `<div class="grab"></div><div class="sheet-head"><span></span><h2>Artikel</h2><button class="pill" onclick="closeSheet()">Fertig</button></div>
+    <p class="hint">Nur eingeschaltete Artikel erscheinen beim Angebot. Gilt fürs ganze Team.</p>
+    <div class="two"><button class="pill" onclick="artikelAlle.forEach(a => a.aus = false); artikelSpeichern(true)">Alle an</button><button class="pill" onclick="artikelAlle.forEach(a => a.aus = true); artikelSpeichern(true)">Alle aus</button></div>
+    <label class="search">${ICON.search}<input type="search" placeholder="Artikel suchen" oninput="const q = this.value.trim().toLowerCase(); document.querySelectorAll('#awahl .row').forEach((r, i) => r.classList.toggle('weg', !!q && !artikelAlle[i].name.toLowerCase().includes(q)))" aria-label="Artikel suchen"></label>
+    <div class="group" id="awahl">${artikelAlle.map((a, i) => `<label class="row"><span>${esc(a.name)}<br><span class="muted small">${euro(a.preis)}</span></span><input type="checkbox" switch ${a.aus ? '' : 'checked'} onchange="artikelAlle[${i}].aus = !this.checked; artikelSpeichern()"></label>`).join('')}</div>`;
+}
+let artikelUhr;
+function artikelSpeichern(neu) {
+  if (neu) document.querySelectorAll('#awahl input').forEach((c, i) => { c.checked = !artikelAlle[i].aus; });
+  lexArtikelCache = null; clearTimeout(artikelUhr);
+  artikelUhr = setTimeout(() => api('artikelAus', { aus: artikelAlle.filter(a => a.aus).map(a => a.id) })
+    .then(() => toast(`${artikelAlle.filter(a => !a.aus).length} von ${artikelAlle.length} Artikeln im Angebot`)).catch(e => toast(e.message)), 700);
+}
+// Offene Leads, die noch kein Kunde in Lexware sind, nachträglich anlegen (bestehende Kunden werden verknüpft)
+const ohneKunde = () => leads.filter(l => AKTIV.includes(l.status) && !l.lex);
+async function nachziehen(knopf) {
+  const n = ohneKunde().length;
+  if (!confirm(`${n} offene Leads als Kunden in Lexware anlegen? Wer schon Kunde ist (gleicher Nachname und gleiche Nummer oder E-Mail), wird nur verknüpft.`)) return;
+  knopf.disabled = true; knopf.lastElementChild.textContent = 'Läuft…';
+  try {
+    let j, summe = 0;
+    do { j = await api('nachziehen'); summe += j.angelegt; knopf.lastElementChild.textContent = `${summe} von ${n}…`; } while (j.rest && j.angelegt);
+    toast(`${summe} Leads sind jetzt Kunden in Lexware`);
+  } catch (e) { toast(e.message); }
+  await laden(true); render();
+}
+
 // Angebotsseite im selben Fenster, gedacht fürs Telefonat: oben was im Angebot ist, darunter alle Artikel zum Suchen
 const angebotSumme = a => [...(a.artikel || []).filter(x => a.menge[x.id]).map(x => x.preis * a.menge[x.id]), ...a.eigene.map(x => x.preis)].reduce((s, x) => s + x, 0);
 async function angebotOeffnen(id) {
@@ -503,7 +543,7 @@ async function angebotOeffnen(id) {
   offen = null;
   const a = angebot = { id, artikel: lexArtikelCache, menge: {}, eigene: [], rabatt: ref ? 20 : 0, referenz: ref, suche: '' };
   angebotZeichnen(); $('.panel').scrollTop = 0;
-  try { lexArtikelCache = (await api('lexArtikel')).artikel; } catch (e) { a.fehler = e.message; }
+  try { lexArtikelCache = (await api('lexArtikel')).artikel.filter(x => !x.aus); } catch (e) { a.fehler = e.message; }
   if (angebot === a) { a.artikel = lexArtikelCache; angebotZeichnen(); }
 }
 function angebotZeichnen() {
@@ -775,7 +815,15 @@ function demoApi(aktion, d) {
     const artikel = [['a1', 'Auftragspauschale', 58, 'Stück'], ['a2', 'Einfache Handwäsche Mittel & Oberklasse', 101.15, 'Stück'],
       ['a3', 'Interieur Aufbereitung', 226.1, 'Stück'], ['a4', 'Lackaufbereitung One-Step-Politur', 380.8, 'Aufwand'], ['a5', 'Polierarbeiten', 65.45, 'Stunde'],
       ['a6', 'Reinigung & Pflege von Ledersitzen', 41.65, 'Stück'], ['a7', '2 Stufen Keramikversiegelung', 714, 'Stück']].map(([id, name, preis, einheit]) => ({ id, name, preis, einheit }));
-    if (aktion === 'lexArtikel') return ok({ firma: 'JD Brüder (Demo)', artikel });
+    if (aktion === 'lexArtikel') return ok({ firma: 'JD Brüder (Demo)', artikel: artikel.map(a => ({ ...a, aus: (window.DEMO_AUS || []).includes(a.id) })) });
+    if (aktion === 'gesendet') {
+      vermerk(`Angebot ${l.angebot.nr} per ${d.weg} geschickt`); l.angebot.gesendet = heute();
+      const nach = !l.naechster ? ymd(new Date(Date.now() + 3 * 864e5)) : '';
+      if (nach) l.naechster = nach;
+      return ok({ lead: kopie(l), angebot: l.angebot, nachfassen: nach });
+    }
+    if (aktion === 'artikelAus') { window.DEMO_AUS = d.aus; return ok({ aus: d.aus }); }
+    if (aktion === 'nachziehen') { const n = DL.filter(x => AKTIV.includes(x.status) && !x.lex); n.forEach(x => { x.lex = 'demo'; }); return ok({ angelegt: n.length, rest: 0 }); }
     if (aktion === 'lexDaten') {
       if (d.speichern) l.kunde = { email: d.email, strasse: d.strasse, plz: d.plz, ort: d.ort };
       l.lex = l.lex || (d.speichern ? 'demo' : '');
