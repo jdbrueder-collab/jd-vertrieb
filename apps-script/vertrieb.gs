@@ -38,7 +38,7 @@ function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
     pruefe(d.pw);
-    const aktion = { liste, speichern, ki, feedback, push: pushAn, foto, fotos }[d.aktion];
+    const aktion = { liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos }[d.aktion];
     if (!aktion) throw fehler('aktion', 'Unbekannte Aktion.');
     out = Object.assign({ ok: true }, aktion(d));
   } catch (err) {
@@ -326,8 +326,15 @@ function pushAn(d) {
   return {};
 }
 
-function sende(title, body, url) {
-  const abos = JSON.parse(props().getProperty('PUSH_ABOS') || '[]');
+// Gerät anmelden und gleich eine Testnachricht nur an dieses Gerät schicken.
+function pushTest(d) {
+  pushAn(d);
+  sende('🔔 Test von JD Vertrieb', 'So sehen eure Benachrichtigungen aus. Ein Tipp öffnet die App.', APP_URL, [d.abo]);
+  return {};
+}
+
+function sende(title, body, url, nur) {
+  const abos = nur || JSON.parse(props().getProperty('PUSH_ABOS') || '[]');
   const geheim = props().getProperty('PUSH_GEHEIMNIS');
   if (!abos.length || !geheim) return;
   const res = UrlFetchApp.fetch(PUSH_URL, {

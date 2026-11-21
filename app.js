@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '4';
+const VERSION = '5';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'rgba(255,255,255,.35)' };
@@ -362,8 +362,8 @@ async function pushEin(still) {
     const reg = await navigator.serviceWorker.ready;
     const abo = await reg.pushManager.getSubscription()
       || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: Uint8Array.from(atob(PUSH_KEY.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0)) });
-    await api('push', { abo: abo.toJSON() });
-    if (!still) { toast('🔔 Benachrichtigungen sind an'); render(); }
+    await api(still ? 'push' : 'pushTest', { abo: abo.toJSON() });   // beim Einschalten kommt gleich eine Testnachricht
+    if (!still) { toast('🔔 Benachrichtigungen sind an, eine Testnachricht ist unterwegs'); render(); }
   } catch (e) { if (!still) toast('Benachrichtigungen gingen nicht an: ' + e.message); }
 }
 // Tipp auf eine Benachrichtigung, während die App schon offen ist
@@ -546,7 +546,7 @@ function demoApi(aktion, d) {
     const jetzt = new Date().toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', '');
     if (aktion === 'liste') return ok({ leads: kopie(DL), tabellen: [{ name: 'Leads November 2026', anzahl: DL.length }], heimUrl: '' });
     if (aktion === 'feedback') return ok({});
-    if (aktion === 'push' || aktion === 'foto') return ok({});
+    if (aktion === 'push' || aktion === 'pushTest' || aktion === 'foto') return ok({});
     if (aktion === 'fotos') return ok({ fotos: [], ordner: '' });
     if (aktion === 'speichern') {
       if (d.status !== undefined) l.status = d.status;

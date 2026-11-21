@@ -169,6 +169,12 @@ assert.strictEqual(w.post({ aktion: 'push', pw, abo: { ...abo, endpoint: 'https:
 assert.ok(w.post({ aktion: 'push', pw, wer: 'David', abo }).ok);
 assert.ok(w.post({ aktion: 'push', pw, wer: 'David', abo }).ok);
 assert.strictEqual(JSON.parse(w.props.PUSH_ABOS).length, 1);
+const handy2 = { endpoint: 'https://fcm.googleapis.com/fcm/send/zwei', keys: { p256dh: 'Q', auth: 'B' } };
+assert.ok(w.post({ aktion: 'pushTest', pw, wer: 'Jonathan', abo: handy2 }).ok);   // Testnachricht nur an das neue Gerät
+assert.strictEqual(w.pushes.length, 1);
+assert.strictEqual(JSON.stringify(w.pushes[0].body.abos.map((a) => a.endpoint)), JSON.stringify([handy2.endpoint]));
+assert.strictEqual(JSON.parse(w.props.PUSH_ABOS).length, 2);
+w.pushes.length = 0; w.props.PUSH_ABOS = JSON.stringify([abo]);
 
 // Neue Leads: erster Lauf merkt nur, danach wird jeder neue Lead genau einmal gemeldet
 w.ctx.meldeNeueLeads();
