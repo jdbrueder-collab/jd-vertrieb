@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '13';
+const VERSION = '14';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -30,6 +30,10 @@ let tab = 'anrufen', filter = 'Aktiv', suche = '';
 let offen = null;            // Lead, der gerade im Sheet offen ist
 const vorschlag = {};        // KI-Vorschläge je Lead
 const fotoCache = {}, fotoStand = {}, fotoRest = {};   // Fotos je Lead, laufender Upload, nicht hochgeladene Fotos
+// WhatsApp bei „Nicht erreicht“. Die Vorlage gilt fürs ganze Team und liegt im Google-Skript (Setup → WhatsApp-Nachricht).
+const VORLAGE_STANDARD = 'Hallo {Name}, hier ist {Ich} von JD Brüder. Ich habe gerade versucht, dich wegen deiner Anfrage zum Thema {Wunsch} anzurufen. Wann passt es dir am besten für einen kurzen Rückruf?';
+let vorlage = VORLAGE_STANDARD;
+const waFrage = {};          // Leads, bei denen gerade die Frage „Jetzt per WhatsApp schreiben?“ steht
 let ziel = decodeURIComponent((location.hash.match(/^#lead=(.+)$/) || [])[1] || '');   // Tipp auf eine Benachrichtigung
 if (ziel) history.replaceState(null, '', location.pathname + location.search);
 const angemeldet = () => DEMO || !!konto.pw;
@@ -44,7 +48,7 @@ async function api(aktion, daten = {}) {
   if (!j.ok) throw Object.assign(new Error(j.fehler || 'Fehler'), { code: j.code });
   return j;
 }
-function uebernimm(j) { leads = j.leads; tabellen = j.tabellen || []; heimUrl = j.heimUrl || ''; stand = new Date(); }
+function uebernimm(j) { leads = j.leads; tabellen = j.tabellen || []; heimUrl = j.heimUrl || ''; vorlage = j.vorlage || VORLAGE_STANDARD; stand = new Date(); }
 async function laden(still) {
   if (!angemeldet() || laedt) return;
   laedt = true; $('.roundbtn')?.classList.add('spin');
@@ -101,8 +105,12 @@ function relativ(iso) {
   if (ymd(d) === ymd(new Date(Date.now() - 864e5))) return 'Gestern';
   return min < 6 * 1440 ? datumKurz(ymd(d)) : `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.`;
 }
+// Was der Kunde will, z. B. Referenzauto (Formularfrage „Interesse“, sonst die erste Antwort)
+const wunsch = l => (l.antworten.find(a => a[0] === 'Interesse') || l.antworten[0] || [])[1] || '';
+const waText = l => vorlage.replaceAll('{Name}', (l.name || '').split(' ')[0]).replaceAll('{Wunsch}', wunsch(l) || 'Fahrzeugaufbereitung')
+  .replaceAll('{Ich}', konto.name || 'das Team').replace(/ +,/g, ',');
 function leadZeile(l) {
-  const info = (l.antworten.find(a => a[0] === 'Interesse') || l.antworten[0] || [, l.telefon])[1];   // nur was der Kunde will, z. B. Referenzauto
+  const info = wunsch(l) || l.telefon;
   return `<div class="lead">
     <button class="open" onclick="openLead(${js(l.id)})"><span class="dot" style="--c:${STATUS[l.status] || STATUS.Neu}"></span>
       <span class="tt"><b>${esc(l.name || 'Ohne Namen')}</b><span>${esc(info)}</span></span>${wann(l)}</button>
@@ -169,6 +177,10 @@ function renderSetup() {
     <div class="label">Design</div>
     <div class="two">${[['dunkel', '🌙 Dunkel'], ['hell', '☀️ Hell']].map(([k, t]) => `<button class="pill ${lies('jdv-design', 'dunkel') === k ? 'sel' : ''}" aria-pressed="${lies('jdv-design', 'dunkel') === k}" onclick="designSetzen('design', '${k}')">${t}</button>`).join('')}</div>
     <div class="group"><label class="row"><span>✨ Gold im Hintergrund</span><input type="checkbox" switch ${lies('jdv-gold', true) ? 'checked' : ''} onchange="designSetzen('gold', this.checked)"></label></div>
+    <div class="label">WhatsApp bei „Nicht erreicht“</div>
+    <textarea id="vorlage" aria-label="WhatsApp-Nachricht" onchange="vorlageSpeichern(this)">${esc(vorlage)}</textarea>
+    <p class="hint">{Name} wird zum Vornamen des Kunden, {Wunsch} zu dem, was er will, {Ich} zu deinem Namen. {Name} und {Wunsch} müssen drinbleiben. Gilt fürs ganze Team.</p>
+    <p class="hint">Vorschau: ${esc(waText({ name: 'Kevin', antworten: [['Interesse', 'Referenzauto']] }))}</p>
     <div class="label">App</div>
     <div class="group">
       <button class="row" onclick="installHilfe()"><span>📲 Auf den Startbildschirm</span><span>›</span></button>
@@ -264,6 +276,7 @@ function leadHtml(l) {
     <div class="card" id="fotos">${fotosHtml(l)}</div>
     <div class="leadfuss">
       <div class="group statusmenu" id="statusmenu" hidden>${Object.keys(STATUS).map(s => `<button class="row" aria-pressed="${s === l.status}" onclick="statusSetzen(${id}, ${js(s)})"><span><span class="dot" style="--c:${STATUS[s]}"></span>${s}</span>${s === l.status ? '<span aria-hidden="true">✓</span>' : ''}</button>`).join('')}</div>
+      ${waFrage[l.id] && l.wa ? `<div class="vorschlag"><span>Per WhatsApp schreiben?</span><a class="pill sm sel" href="${esc(l.wa + '?text=' + encodeURIComponent(waText(l)))}" target="_blank" rel="noopener" onclick="waGeschickt(${id})">WhatsApp</a><button class="pill sm" onclick="delete waFrage[${id}];leadNeu(${id})">Nein</button></div>` : ''}
       <button class="pill statuswahl" aria-expanded="false" aria-controls="statusmenu" onclick="statusMenu()"><span class="dot" style="--c:${STATUS[l.status] || STATUS.Neu}"></span><b>${esc(l.status)}</b><span class="muted" aria-hidden="true">▴</span></button>
       <div class="two">
         ${l.telefon ? `<a class="big" href="${esc(telLink(l))}" onclick="anruf(event, ${id})">${ICON.phone}Anrufen</a>` : '<button class="big" disabled>Keine Nummer</button>'}
@@ -288,9 +301,22 @@ async function setze(id, aend) {
   Object.assign(l, aend); leadNeu(id); render();
   try {
     Object.assign(l, (await api('speichern', { id, ...aend })).lead);
+    if (aend.status) aend.status === 'Nicht erreicht' ? waFrage[id] = true : delete waFrage[id];
     toast(aend.status ? `Status: ${aend.status}` : aend.naechster ? `Melden am ${datumKurz(aend.naechster)}` : aend.naechster === '' ? 'Termin entfernt' : 'Gespeichert');
   } catch (e) { Object.assign(l, alt); toast(e.message); }
   leadNeu(id); render();
+}
+// Tipp auf „WhatsApp“ in der Frage: WhatsApp geht mit dem fertigen Text auf, im Verlauf landet ein Vermerk
+function waGeschickt(id) {
+  delete waFrage[id]; leadNeu(id);
+  api('speichern', { id, notiz: 'Nicht erreicht, per WhatsApp angeschrieben' })
+    .then(j => { Object.assign(leads.find(x => x.id === id) || {}, j.lead); leadNeu(id); }).catch(e => toast(e.message));
+}
+async function vorlageSpeichern(t) {
+  const neu = t.value.trim();
+  if (!neu.includes('{Name}') || !neu.includes('{Wunsch}')) { t.value = vorlage; return toast('{Name} und {Wunsch} müssen in der Nachricht bleiben.'); }
+  try { await api('vorlage', { vorlage: neu }); vorlage = neu; toast('WhatsApp-Nachricht gespeichert'); render(); }
+  catch (e) { t.value = vorlage; toast(e.message); }
 }
 function uebernehmen(id) {
   const v = vorschlag[id]; delete vorschlag[id];
@@ -575,6 +601,7 @@ function demoApi(aktion, d) {
     if (aktion === 'liste') return ok({ leads: kopie(DL), tabellen: [{ name: 'Leads November 2026', anzahl: DL.length }], heimUrl: '' });
     if (aktion === 'feedback') return ok({});
     if (aktion === 'push' || aktion === 'pushTest' || aktion === 'foto') return ok({});
+    if (aktion === 'vorlage') return ok({});
     if (aktion === 'fotos') return ok({ fotos: [], ordner: '' });
     if (aktion === 'speichern') {
       if (d.status !== undefined) l.status = d.status;

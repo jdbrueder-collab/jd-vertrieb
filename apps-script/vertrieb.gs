@@ -38,7 +38,7 @@ function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
     pruefe(d.pw);
-    const aktion = { liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos }[d.aktion];
+    const aktion = { liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos, vorlage }[d.aktion];
     if (!aktion) throw fehler('aktion', 'Unbekannte Aktion.');
     out = Object.assign({ ok: true }, aktion(d));
   } catch (err) {
@@ -168,7 +168,7 @@ function liste() {
     }
   });
   leads.sort((a, b) => b.datum.localeCompare(a.datum));
-  return { leads, tabellen, heimUrl: SpreadsheetApp.getActiveSpreadsheet().getUrl() };
+  return { leads, tabellen, heimUrl: SpreadsheetApp.getActiveSpreadsheet().getUrl(), vorlage: props().getProperty('WA_VORLAGE') || '' };
 }
 
 // Lead über seine id finden, frisch aus der Tabelle, weil Meta und das Sortier-Skript Zeilen verschieben.
@@ -285,6 +285,14 @@ function claude(system, text, schema) {
   const block = (body.content || []).find((b) => b.type === 'text');
   if (!block || body.stop_reason === 'max_tokens') throw fehler('ki', 'Die KI hat keine vollständige Antwort geliefert.');
   return JSON.parse(block.text);
+}
+
+// WhatsApp-Nachricht für „Nicht erreicht“, gilt fürs ganze Team. {Name} und {Wunsch} setzt die App ein und müssen bleiben.
+function vorlage(d) {
+  const t = String(d.vorlage || '').trim();
+  if (!t.includes('{Name}') || !t.includes('{Wunsch}') || t.length > 1000) throw fehler('vorlage', '{Name} und {Wunsch} müssen in der Nachricht bleiben, höchstens 1000 Zeichen.');
+  props().setProperty('WA_VORLAGE', t);
+  return {};
 }
 
 // Feedback-Lampe: landet in dieser Tabelle im Reiter "Feedback".

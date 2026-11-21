@@ -153,6 +153,13 @@ assert.doesNotMatch(r.lead.notizen, /KI:/);               // Verlauf zeigt nur, 
 assert.match(zeileAnna[9], /\n\n20\.11\.26 14:03 KI: • Will Komplettpaket\n/);
 assert.strictEqual(JSON.stringify(r.vorschlag), '{"status":"Zurückrufen","naechster":"2026-11-27"}');
 
+// WhatsApp-Vorlage: Platzhalter {Name} und {Wunsch} müssen bleiben, danach kommt sie mit der Liste
+assert.strictEqual(w.post({ aktion: 'liste', pw }).vorlage, '');
+assert.strictEqual(w.post({ aktion: 'vorlage', pw, vorlage: 'Hallo, ruf zurück' }).code, 'vorlage');
+assert.strictEqual(w.post({ aktion: 'vorlage', pw, vorlage: 'Hallo {Name}, ruf zurück' }).code, 'vorlage');
+assert.ok(w.post({ aktion: 'vorlage', pw, vorlage: ' Hallo {Name}, wegen {Wunsch}: ruf zurück! ' }).ok);
+assert.strictEqual(w.post({ aktion: 'liste', pw }).vorlage, 'Hallo {Name}, wegen {Wunsch}: ruf zurück!');
+
 // Feedback
 assert.strictEqual(w.post({ aktion: 'feedback', pw, text: ' ' }).code, 'leer');
 assert.ok(w.post({ aktion: 'feedback', pw, wer: 'David', art: 'Idee', text: 'Mehr Gold' }).ok);
