@@ -24,13 +24,13 @@ function blatt(rows) {
 }
 
 function welt(props) {
-  const kopf = ['id', 'created_time', 'ad_name', 'platform', 'interesse', 'fahrzeug', 'full_name', 'phone_number', 'lead_status', 'Notiz', 'Termin'];
+  const kopf = ['id', 'created_time', 'ad_name', 'platform', 'interesse', 'fahrzeug', 'full_name', 'phone_number', 'lead_status', 'Notiz', 'Termin', 'email', 'city'];
   const lead = blatt([
     // Meta hat einen neuen Lead über die Kopfzeile geschoben, das Sortier-Skript lief noch nicht
     ['l:3', '2026-11-20T15:00:00-05:00', 'Referenzautos', 'ig', 'referenzauto', 'Golf 4', 'Cora Frisch', 'p:+491713333333', 'CREATED', '', 'Termin'],
     kopf,
     ['l:1', new Date('2026-11-19T09:00:00Z'), 'Referenzautos', 'ig', 'referenzauto', 'Audi A6', 'Anna Alt', 'p:0171 1111111', 'Zurückrufen', 'Hat Interesse', ''],
-    ['l:2', 20777.5 + 25569, 'Referenzautos', 'fb', 'aufbereitung', '', 'Ben Neu', 'p:+49 171 2222222', '', '', ''],
+    ['l:2', 20777.5 + 25569, 'Referenzautos', 'fb', 'aufbereitung', '', 'Ben Neu', 'p:+49 171 2222222', '', '', '', 'ben@example.de', 'Puderbach'],
     ['', '', '', '', '', '', 'Von Hand', '0171 4444444', 'Offen', '', ''],
   ]);
   const heim = blatt([['Link'], ['https://docs.google.com/spreadsheets/d/' + A + '/edit?usp=sharing', ''], ['https://docs.google.com/spreadsheets/d/' + KAPUTT + '/edit', 'Alt']]);
@@ -39,22 +39,30 @@ function welt(props) {
   const lexware = { anfragen: [], naechste: [] };
   const lexAntwort = (url, o) => {
     const body = o.payload ? JSON.parse(o.payload) : null, pfad = url.replace('https://api.lexware.io', '');
-    lexware.anfragen.push({ pfad, methode: o.method, auth: o.headers.Authorization, body });
+    lexware.anfragen.push({ pfad, methode: o.method, auth: o.headers.Authorization, accept: o.headers.Accept, body });
     const vor = lexware.naechste.shift();
     if (vor) return { getResponseCode: () => vor.code, getContentText: () => JSON.stringify(vor.body || {}) };
-    const j = pfad === '/v1/profile' ? { companyName: 'JD Brüder', smallBusiness: false, taxType: 'net' }
-      : pfad.startsWith('/v1/articles') ? { content: [
-        { id: 'A2', title: 'Politur', type: 'SERVICE', unitName: 'Pauschal', price: { netPrice: 168.07, grossPrice: 200, leadingPrice: 'GROSS', taxRate: 19 } },
-        { id: 'A1', title: 'Innenreinigung', type: 'SERVICE', unitName: 'Pauschal', price: { netPrice: 100, leadingPrice: 'NET', taxRate: 19 } },
-        { id: 'A3', title: 'Alt', type: 'PRODUCT', archived: true, price: {} }] }
-      : pfad === '/v1/contacts' ? { id: 'K-1', version: 1 } : pfad === '/v1/quotations' ? { id: 'Q-1', version: 1 } : null;
+    let j = null;
+    if (pfad === '/v1/profile') j = { companyName: 'JD Brüder GbR', smallBusiness: false, taxType: 'net' };
+    else if (pfad.startsWith('/v1/articles')) j = { content: [
+      { id: 'A2', title: 'Politur', type: 'SERVICE', unitName: 'Pauschal', price: { netPrice: 168.07, grossPrice: 200, leadingPrice: 'GROSS', taxRate: 19 } },
+      { id: 'A1', title: 'Interieur Aufbereitung', type: 'SERVICE', unitName: 'Stück', description: 'Sitze, Teppich, Himmel', price: { netPrice: 190, leadingPrice: 'NET', taxRate: 19 } },
+      { id: 'A4', title: 'Auftragspauschale', type: 'PRODUCT', unitName: 'Stück', price: { netPrice: 58, grossPrice: 58, leadingPrice: 'NET', taxRate: 0 } },
+      { id: 'A3', title: 'Alt', type: 'PRODUCT', archived: true, price: {} }] };
+    else if (pfad === '/v1/contacts' && o.method === 'post') { lexware.kontakt = Object.assign({}, body, { id: 'K-1', version: 1 }); j = { id: 'K-1', version: 1 }; }
+    else if (pfad === '/v1/contacts/K-1' && o.method === 'get') j = JSON.parse(JSON.stringify(lexware.kontakt));
+    else if (pfad === '/v1/contacts/K-1' && o.method === 'put') { lexware.kontakt = Object.assign(body, { version: body.version + 1 }); j = { id: 'K-1' }; }
+    else if (pfad === '/v1/quotations?finalize=true') j = { id: 'Q-1', version: 1 };
+    else if (pfad === '/v1/quotations/Q-1') j = { id: 'Q-1', voucherNumber: 'AG0049', voucherStatus: 'open', totalPrice: { totalGrossAmount: 409.56 } };
+    else if (pfad === '/v1/quotations/Q-1/file') return { getResponseCode: () => 200, getBlob: () => ({ bytes: '%PDF', setName(n) { this.name = n; return this; } }) };
     return { getResponseCode: () => j ? 200 : 404, getContentText: () => JSON.stringify(j || {}) };
   };
+
   let claudeBody = null;
   const ordner = (name) => {
     const o = { id: 'O' + drive.ordner.length, name, dateien: [], freigabe: null, getId: () => o.id, getUrl: () => 'https://drive/' + o.id,
       createFolder: (n) => ordner(n), setSharing: (a, b) => { o.freigabe = a + '/' + b; },
-      createFile: (blob) => { o.dateien.push(blob); },
+      createFile: (blob) => { o.dateien.push(blob); return { getUrl: () => 'https://datei/' + blob.name, setSharing() {} }; },
       getFiles: () => { let i = 0; return { hasNext: () => i < o.dateien.length, next: () => { const b = o.dateien[i++]; return { getName: () => b.name, getUrl: () => 'https://datei/' + b.name, getThumbnail: () => ({ getContentType: () => 'image/png', getBytes: () => [1, 2, 3] }) }; } }; } };
     drive.ordner.push(o);
     return o;
@@ -246,55 +254,87 @@ assert.strictEqual(w.post({ aktion: 'liste', pw }).lexware, false);
 w.props.LEXWARE_API_KEY = ' lex-schluessel ';
 r = w.post({ aktion: 'liste', pw });
 assert.strictEqual(r.lexware, true);
-assert.strictEqual(r.leads.find((l) => l.id === anna).lex, '');
+const annaL = r.leads.find((l) => l.id === anna), benL = r.leads.find((l) => l.id === ben);
+assert.strictEqual(annaL.lex, ''); assert.strictEqual(annaL.angebot, null);
+assert.strictEqual(JSON.stringify(benL.kunde), '{"email":"ben@example.de","strasse":"","plz":"","ort":"Puderbach"}');   // aus dem Meta-Formular
+assert.ok(!benL.antworten.some((x) => /ben@|Puderbach/.test(x[1])));   // steht bei den Kundendaten, nicht bei den Antworten
 
 // Artikel: archivierte weg, sortiert, Endpreis (auch wenn nur netto hinterlegt), Profil nur einmal geholt
 r = w.post({ aktion: 'lexArtikel', pw });
 assert.ok(r.ok, r.fehler);
-assert.strictEqual(r.firma, 'JD Brüder');
-assert.strictEqual(JSON.stringify(r.artikel.map((a) => [a.name, a.preis, a.steuer])), '[["Innenreinigung",119,19],["Politur",200,19]]');
+assert.strictEqual(r.firma, 'JD Brüder GbR');
+assert.strictEqual(JSON.stringify(r.artikel.map((a) => [a.name, a.preis])), '[["Auftragspauschale",58],["Interieur Aufbereitung",226.1],["Politur",200]]');
 assert.strictEqual(w.lexware.anfragen[0].auth, 'Bearer lex-schluessel');
 w.post({ aktion: 'lexArtikel', pw });
 assert.strictEqual(w.lexware.anfragen.filter((x) => x.pfad === '/v1/profile').length, 1);
 
-// Kunde anlegen: einmal, mit Vor- und Nachname, Handynummer, Vermerk im Verlauf
+// Kundendaten: ohne Kontakt aus Meta gelesen; Speichern legt den Kunden an, mit E-Mail und Adresse
+r = w.post({ aktion: 'lexDaten', pw, id: ben });
+assert.strictEqual(JSON.stringify(r), '{"ok":true,"lex":"","kunde":{"email":"ben@example.de","strasse":"","plz":"","ort":"Puderbach"}}');
+assert.strictEqual(w.post({ aktion: 'lexDaten', pw, id: anna, speichern: true, email: 'kaputt' }).code, 'email');
 w.lexware.anfragen.length = 0;
-r = w.post({ aktion: 'lexKunde', pw, wer: 'David', id: anna });
+r = w.post({ aktion: 'lexDaten', pw, id: anna, speichern: true, email: 'anna@example.de', strasse: 'Hauptstr. 5', plz: '56305', ort: 'Puderbach' });
 assert.ok(r.ok, r.fehler);
 assert.strictEqual(r.lex, 'K-1');
-const kontakt = w.lexware.anfragen[0];
-assert.strictEqual(kontakt.pfad, '/v1/contacts');
-assert.strictEqual(JSON.stringify(kontakt.body.person), '{"firstName":"Anna","lastName":"Alt"}');
-assert.strictEqual(kontakt.body.phoneNumbers.mobile[0], '0171 1111111');
-assert.strictEqual(JSON.stringify(kontakt.body.roles), '{"customer":{}}');
-assert.match(r.lead.notizen, /David: In Lexware als Kunde angelegt$/);
-assert.strictEqual(w.post({ aktion: 'lexKunde', pw, id: anna }).lex, 'K-1');
-assert.strictEqual(w.lexware.anfragen.filter((x) => x.pfad === '/v1/contacts').length, 1);
+let k = w.lexware.anfragen[0].body;
+assert.strictEqual(JSON.stringify(k.person), '{"firstName":"Anna","lastName":"Alt"}');
+assert.strictEqual(k.phoneNumbers.mobile[0], '0171 1111111');
+assert.strictEqual(JSON.stringify(k.emailAddresses), '{"private":["anna@example.de"]}');
+assert.strictEqual(JSON.stringify(k.addresses), '{"billing":[{"street":"Hauptstr. 5","zip":"56305","city":"Puderbach","countryCode":"DE"}]}');
 assert.strictEqual(w.post({ aktion: 'liste', pw }).leads.find((l) => l.id === anna).lex, 'K-1');
-
-// Angebot: nichts gewählt geht nicht; sonst Entwurf mit Endpreisen, Artikel und eigener Position, Vermerk und Link
-assert.strictEqual(w.post({ aktion: 'lexAngebot', pw, id: anna, posten: [{ name: 'X', menge: 0, preis: 5 }] }).code, 'leer');
+// mit Kontakt: lesen aus Lexware; ändern = lesen + PUT mit Version, bei 409 nochmal
+assert.strictEqual(w.post({ aktion: 'lexDaten', pw, id: anna }).kunde.strasse, 'Hauptstr. 5');
 w.lexware.anfragen.length = 0;
-w.lexware.naechste.push({ code: 429 });       // zu schnell: kurz warten und nochmal
-r = w.post({ aktion: 'lexAngebot', pw, wer: 'David', id: anna, posten: [
-  { artikel: 'A2', art: 'SERVICE', name: 'Politur', einheit: 'Pauschal', menge: 1, preis: 200, steuer: 19 },
-  { name: 'Lederpflege', menge: 2, preis: 54.5 }] });
+w.lexware.naechste.push(null, { code: 409, body: { status: 409 } });   // GET normal, PUT trifft eine neuere Version
+r = w.post({ aktion: 'lexDaten', pw, id: anna, speichern: true, email: '', strasse: 'Bahnhofstr. 1', plz: '', ort: '' });
 assert.ok(r.ok, r.fehler);
-assert.strictEqual(r.link, 'https://app.lexware.de/permalink/quotations/edit/Q-1');
-const ang = w.lexware.anfragen.filter((x) => x.pfad === '/v1/quotations');
-assert.strictEqual(ang.length, 2);
-const q = ang[1].body;
+assert.strictEqual(w.lexware.anfragen.map((x) => x.methode).join(), 'get,put,get,put');
+assert.strictEqual(JSON.stringify(w.lexware.kontakt.addresses.billing[0]), '{"street":"Bahnhofstr. 1","zip":"56305","city":"Puderbach","countryCode":"DE"}');   // leere Felder ändern nichts
+assert.strictEqual(w.lexware.kontakt.emailAddresses.private[0], 'anna@example.de');
+assert.strictEqual(w.lexware.kontakt.version, 2);   // mit der frisch gelesenen Version geschrieben
+
+// Angebot: nichts gewählt geht nicht, unbekannter Artikel wird gemeldet
+assert.strictEqual(w.post({ aktion: 'lexAngebot', pw, id: anna, posten: [{ name: 'X', menge: 0, preis: 5 }] }).code, 'leer');
+assert.strictEqual(w.post({ aktion: 'lexAngebot', pw, id: anna, posten: [{ artikel: 'WEG', menge: 1 }] }).code, 'artikel');
+// fertiges Angebot mit eurem Steuer-Typ (netto), Artikelpreisen aus Lexware, eigener Position, Rabatt und PDF in Drive
+w.lexware.anfragen.length = 0;
+w.lexware.naechste.push(null, { code: 429 });   // Profil aus dem Cache, Artikel normal, Angebot zu schnell: warten, nochmal
+r = w.post({ aktion: 'lexAngebot', pw, wer: 'David', id: anna, rabatt: 20, referenz: true, posten: [
+  { artikel: 'A1', menge: 2, preis: 1 },               // Preis aus der App zählt nicht, nur der aus Lexware
+  { name: 'Lederpflege', menge: 1, preis: 59.5 }] });
+assert.ok(r.ok, r.fehler);
+const q = w.lexware.anfragen.filter((x) => x.pfad === '/v1/quotations?finalize=true').pop().body;
+assert.strictEqual(w.lexware.anfragen.filter((x) => x.pfad === '/v1/quotations?finalize=true').length, 2);
 assert.strictEqual(q.address.contactId, 'K-1');
-assert.strictEqual(q.taxConditions.taxType, 'gross');
+assert.strictEqual(q.taxConditions.taxType, 'net');
 assert.match(q.voucherDate, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+01:00$/);
-assert.ok(q.expirationDate > q.voucherDate);
-assert.strictEqual(q.introduction, 'Fahrzeug: Audi A6');
-assert.strictEqual(JSON.stringify(q.lineItems[0]), '{"id":"A2","type":"service","name":"Politur","quantity":1,"unitName":"Pauschal","unitPrice":{"currency":"EUR","grossAmount":200,"taxRatePercentage":19}}');
-assert.strictEqual(JSON.stringify(q.lineItems[1]), '{"type":"custom","name":"Lederpflege","quantity":2,"unitName":"Pauschal","unitPrice":{"currency":"EUR","grossAmount":54.5,"taxRatePercentage":19}}');
-assert.match(r.lead.notizen, /David: Angebot in Lexware angelegt \(Entwurf, 309,00 €\): Politur, 2× Lederpflege$/);
+assert.strictEqual(JSON.stringify(q.totalPrice), '{"currency":"EUR","totalDiscountPercentage":20}');
+assert.strictEqual(q.introduction, 'Fahrzeug: Audi A6\nAls Referenzkunde erhalten Sie 20 % Rabatt.\nGerne bieten wir Ihnen an:');
+assert.match(q.remark, /Auftragserteilung/);
+assert.strictEqual(JSON.stringify(q.lineItems[0]), '{"id":"A1","type":"service","name":"Interieur Aufbereitung","quantity":2,"unitName":"Stück","unitPrice":{"currency":"EUR","netAmount":190,"taxRatePercentage":19},"description":"Sitze, Teppich, Himmel"}');
+assert.strictEqual(JSON.stringify(q.lineItems[1]), '{"type":"custom","name":"Lederpflege","quantity":1,"unitName":"Pauschal","unitPrice":{"currency":"EUR","netAmount":50,"taxRatePercentage":19}}');
+assert.strictEqual(w.lexware.anfragen.find((x) => x.pfad.endsWith('/file')).accept, 'application/pdf');
+assert.strictEqual(JSON.stringify(r.angebot), JSON.stringify({ nr: 'AG0049', summe: 409.56, pdf: 'https://datei/Angebot AG0049.pdf', link: 'https://app.lexware.de/permalink/quotations/view/Q-1', datum: r.angebot.datum }));
+assert.ok(w.drive.ordner.some((o) => o.dateien.some((d) => d.name === 'Angebot AG0049.pdf')));
+assert.match(r.lead.notizen, /David: Angebot AG0049 erstellt \(409,56 €, 20 % Rabatt\): 2× Interieur Aufbereitung, Lederpflege$/);
+assert.strictEqual(w.post({ aktion: 'liste', pw }).leads.find((l) => l.id === anna).angebot.nr, 'AG0049');
+// PDF klappt nicht: Angebot ist trotzdem da und gemerkt
+w.lexware.naechste.push(null, null, null, { code: 500 });
+r = w.post({ aktion: 'lexAngebot', pw, id: anna, posten: [{ artikel: 'A4', menge: 1 }] });
+assert.ok(r.ok, r.fehler);
+assert.strictEqual(r.angebot.nr, 'AG0049'); assert.strictEqual(r.angebot.pdf, '');
+
+// Neue Anfrage: wird sofort Kunde in Lexware, mit E-Mail aus dem Formular
+const vorher = w.lexware.anfragen.filter((x) => x.pfad === '/v1/contacts').length;
+w.lead.push(['l:6', new Date().toISOString(), 'Referenzautos', 'ig', 'referenzauto', 'Golf 7', 'Fritz Frisch', 'p:+491716666666', 'CREATED', '', '', 'fritz@example.de', '']);
+w.aendern(); w.ctx.meldeNeueLeads();
+const neuK = w.lexware.anfragen.filter((x) => x.pfad === '/v1/contacts');
+assert.strictEqual(neuK.length, vorher + 1);
+assert.strictEqual(neuK.pop().body.emailAddresses.private[0], 'fritz@example.de');
+assert.ok(w.props['LEX_' + A + '~l:6']);
 
 // Fehler von Lexware lesbar, falscher Schlüssel erklärt
-w.lexware.naechste.push({ code: 406, body: { status: 406, details: [{ field: 'lineItems[0].unitPrice', violation: 'NOTNULL' }] } });
+w.lexware.naechste.push(null, { code: 406, body: { status: 406, details: [{ field: 'lineItems[0].unitPrice', violation: 'NOTNULL' }] } });
 assert.strictEqual(w.post({ aktion: 'lexAngebot', pw, id: anna, posten: [{ name: 'X', menge: 1, preis: 5 }] }).fehler, 'Lexware meldet Fehler 406: lineItems[0].unitPrice NOTNULL.');
 w.cache.LEX_PROFIL = undefined;
 w.lexware.naechste.push({ code: 401, body: { message: 'Unauthorized' } });

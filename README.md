@@ -46,11 +46,14 @@ Wer beim Lead den Status auf *Nicht erreicht* setzt, bekommt die Frage „Per Wh
 
 ## Lexware
 
-Ist `LEXWARE_API_KEY` hinterlegt, hat jeder Lead einen Bereich *Lexware*:
+Ist `LEXWARE_API_KEY` hinterlegt (Skripteigenschaft im Google-Skript), passiert Folgendes:
 
-- **Kunde anlegen** legt den Lead als Kunden in Lexware an (Name, Handynummer, Interesse und Fahrzeug als Notiz). Das Skript merkt sich die Kontakt-id (Skripteigenschaft `LEX_<Lead-id>`), ein Kunde entsteht nie doppelt. Danach führt *Kunde ↗* direkt zum Kontakt in Lexware.
-- **Angebot** zeigt eure Artikel aus Lexware zum Antippen, dazu eigene Positionen mit Bezeichnung und Preis. Preise sind Endpreise (bei Kleinunternehmern ohne Umsatzsteuer). *Angebot anlegen* legt es als **Entwurf** in Lexware an, 30 Tage gültig, mit dem Fahrzeug im Einleitungstext. Fehlt der Kunde noch, wird er dabei angelegt. Prüfen und verschicken geht in Lexware über *Angebot in Lexware öffnen*. Im Verlauf landet ein Vermerk mit Summe und Positionen.
-- Pakete und Preise pflegt ihr in Lexware unter *Artikel*, die App liest sie jedes Mal frisch. *Setup → Lexware → Prüfen* zeigt, ob der Schlüssel funktioniert und wie viele Artikel da sind.
+- **Jede neue Anfrage wird sofort Kunde in Lexware**, mit Name, Handynummer, Interesse und Fahrzeug als Notiz, dazu E-Mail und Adresse, falls das Meta-Formular sie abfragt (Felder `email`, `street_address`, `post_code`/`zip_code`, `city`). Das Skript merkt sich die Kontakt-id (`LEX_<Lead-id>`), ein Kunde entsteht nie doppelt. Ältere Leads werden beim ersten Angebot oder bei den ersten Kundendaten angelegt.
+- **Kundendaten im Kundenfenster:** E-Mail, Straße, PLZ und Ort lassen sich im Telefonat eintragen. Sie gehen beim Verlassen des Feldes direkt nach Lexware. Leere Felder ändern dort nichts.
+- **Angebot** (Knopf in der festen Leiste unten, auch mitten im Telefonat): oben steht, was im Angebot ist, darunter alle Artikel aus Lexware mit Suche, dazu eigene Positionen. **Rabatt:** *Referenz 20 %* ist bei Leads mit Interesse Referenzauto schon an, sonst ein eigener Prozentsatz. Das Angebot steht dann als Gesamtrabatt drin, bei Referenz mit einem Satz in der Einleitung.
+- *Angebot erstellen* legt es **fertig** in Lexware an (mit Nummer, 30 Tage gültig, eure Standardtexte, Fahrzeug in der Einleitung). Artikelpreise kommen frisch aus Lexware, eigene Positionen sind Endpreise. Das PDF landet im Drive-Ordner des Kunden (per Link sichtbar).
+- **Verschicken:** Unter *Letztes Angebot* öffnet *WhatsApp* den Chat mit fertigem Text und PDF-Link, *Mail* die Mail-App mit Betreff und Link (dafür muss die E-Mail eingetragen sein). Im Verlauf landet jeweils ein Vermerk. Das letzte Angebot merkt sich das Skript in `ANGEBOT_<Lead-id>`.
+- Pakete und Preise pflegt ihr in Lexware unter *Artikel*. *Setup → Lexware → Prüfen* zeigt, ob der Schlüssel funktioniert.
 
 ## Design
 

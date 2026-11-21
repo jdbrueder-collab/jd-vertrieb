@@ -96,6 +96,16 @@ input:focus-visible,textarea:focus-visible{box-shadow:0 0 0 2px var(--accent)}
 .menge b{min-width:1.4em;text-align:center}
 .eigene>input{width:auto;flex:1;text-align:left}
 .eigene>#ep-preis{flex:0 0 5.5em;text-align:right}
+.menge>.prozent{width:3.6em;min-height:44px;text-align:right}
+.row.weg{display:none}
+.drei{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--gap-s)}
+.drei .pill{padding:12px 6px;font-size:15px;gap:6px}
+.drei .pill svg{width:18px;height:18px;flex:none}
+.angebotzeile{display:flex;justify-content:space-between;align-items:baseline;gap:var(--gap);margin:0 0 var(--gap)}
+.angebotzeile .muted{white-space:nowrap}
+.fussoben{display:flex;gap:var(--gap-s);margin:0 0 var(--gap-s)}
+.fussoben .statuswahl{flex:1;margin:0;min-width:0}
+.fussoben .sel{flex:none;padding:13px 18px;white-space:nowrap}
 .datum{display:flex;align-items:center;gap:var(--gap-s)}
 /* Lead-Fenster: Status und Anrufen/WhatsApp bleiben unten fest stehen, wie die Tab-Leiste */
 .panel:has(> .leadfuss){padding-bottom:0}

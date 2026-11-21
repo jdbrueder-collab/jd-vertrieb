@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '16';
+const VERSION = '17';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -33,10 +33,10 @@ const fotoCache = {}, fotoStand = {}, fotoRest = {};   // Fotos je Lead, laufend
 // WhatsApp bei „Nicht erreicht“. Die Vorlage gilt fürs ganze Team und liegt im Google-Skript (Setup → WhatsApp-Nachricht).
 const VORLAGE_STANDARD = 'Hallo {Name}, hier ist {Ich} von JD Brüder. Ich habe gerade versucht, dich wegen deiner Anfrage zum Thema {Wunsch} anzurufen. Wann passt es dir am besten für einen kurzen Rückruf?';
 let vorlage = VORLAGE_STANDARD;
-// Lexware: Kunde anlegen und Angebotsentwurf (nur sichtbar, wenn im Google-Skript ein Schlüssel hinterlegt ist)
+// Lexware: Angebot und Kundendaten (nur sichtbar, wenn im Google-Skript ein Schlüssel hinterlegt ist)
 const LEX_APP = 'https://app.lexware.de/permalink/';
 let lexAn = false, lexArtikelCache = null, angebot = null;   // angebot: gerade offene Angebotsseite
-const lexLink = {};          // zuletzt angelegtes Angebot je Lead
+const kundeCache = {}, kundeUhr = {};   // E-Mail und Adresse je Lead (aus Lexware oder gerade eingetippt), Speichern mit kurzer Pause
 const waFrage = {};          // Leads, bei denen gerade die Frage „Jetzt per WhatsApp schreiben?“ steht
 let ziel = decodeURIComponent((location.hash.match(/^#lead=(.+)$/) || [])[1] || '');   // Tipp auf eine Benachrichtigung
 if (ziel) history.replaceState(null, '', location.pathname + location.search);
@@ -246,6 +246,7 @@ function openLead(id, fokus) {
   offen = id; angebot = null;
   sheet(leadHtml(l));
   if (!fotoCache[id]) fotosLaden(id);
+  if (lexAn && !kundeCache[id]) kundeLaden(id);
   const entwurf = lies('jdv-entwurf', {});
   if (entwurf[id]) { $('#notiz').value = entwurf[id]; delete entwurf[id]; merke('jdv-entwurf', entwurf); }
   if (fokus) setTimeout(() => $('#notiz')?.focus(), 300);
@@ -255,6 +256,7 @@ function leadNeu(id) {
   const l = leads.find(x => x.id === id), p = $('.panel');
   if (offen !== id || !l || !p) return;
   const txt = $('#notiz')?.value || '', top = p.scrollTop;
+  if ($('#kunde')) kundeCache[id] = kundeFelder();
   p.innerHTML = '<div class="grab"></div>' + leadHtml(l);
   $('#notiz').value = txt; p.scrollTop = top;
 }
@@ -268,6 +270,7 @@ function leadHtml(l) {
     <div class="label">Details</div>
     <div class="group">${zeile('Telefon', l.telefon)}${zeile('Eingang', isNaN(eingang) ? '' : eingang.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }))}${l.antworten.map(a => zeile(a[0], a[1])).join('')}${zeile('Anzeige', l.anzeige)}${zeile('Quelle', l.quelle)}${zeile('Tabelle', l.tabelle)}</div>
     <div class="group"><div class="row"><label for="termin">Termin oder Rückruf</label><span class="datum"><input id="termin" type="date" value="${esc(l.naechster)}" onchange="terminSetzen(${id}, this.value)"><button class="pill sm" onclick="terminSetzen(${id}, '')" aria-label="Termin entfernen"${l.naechster ? '' : ' hidden'}>✕</button></span></div></div>
+    ${lexAn ? kundeBlock(l) : ''}
     <div class="label">Neue Notiz</div>
     <textarea id="notiz" placeholder="Wie lief das Gespräch? Was will der Kunde?"></textarea>
     <p class="hint">🎙️ Tipp aufs Mikrofon der Tastatur und erzähl einfach. Beim Schließen wird die Notiz automatisch gespeichert.</p>
@@ -275,9 +278,6 @@ function leadHtml(l) {
     <div class="label">KI-Zusammenfassung</div>
     <div class="card"><div class="ki" id="ki">${l.ki ? esc(l.ki) : '<span class="muted">Noch keine. Sobald du eine Notiz speicherst, fasst Claude zusammen.</span>'}</div>${vor}
       ${l.notizen ? `<button class="pill wide" id="kbtn" style="margin:var(--gap) 0 0" onclick="kiStarten(${id})">✨ ${l.ki ? 'Neu zusammenfassen' : 'Zusammenfassen'}</button>` : ''}</div>
-    ${lexAn ? `<div class="label">Lexware</div>
-    <div class="card">${lexLink[l.id] ? `<a class="pill wide sel" href="${esc(lexLink[l.id])}" target="_blank" rel="noopener">🧾 Angebot in Lexware öffnen ↗</a>` : ''}
-      <div class="two" style="margin:0">${l.lex ? `<a class="pill" href="${esc(LEX_APP + 'contacts/view/' + l.lex)}" target="_blank" rel="noopener">👤 Kunde ↗</a>` : `<button class="pill" onclick="kundeAnlegen(${id}, this)">👤 Kunde anlegen</button>`}<button class="pill" onclick="angebotOeffnen(${id})">🧾 Angebot</button></div></div>` : ''}
     <div class="label">Verlauf</div>
     <div class="card verlauf">${l.notizen ? esc(l.notizen) : '<span class="muted">Noch keine Notizen.</span>'}</div>
     <div class="label">Fotos</div>
@@ -285,7 +285,7 @@ function leadHtml(l) {
     <div class="leadfuss">
       <div class="group statusmenu" id="statusmenu" hidden>${Object.keys(STATUS).map(s => `<button class="row" aria-pressed="${s === l.status}" onclick="statusSetzen(${id}, ${js(s)})"><span><span class="dot" style="--c:${STATUS[s]}"></span>${s}</span>${s === l.status ? '<span aria-hidden="true">✓</span>' : ''}</button>`).join('')}</div>
       ${waFrage[l.id] && l.wa ? `<div class="vorschlag"><span>Per WhatsApp schreiben?</span><a class="pill sm sel" href="${esc(l.wa + '?text=' + encodeURIComponent(waText(l)))}" target="_blank" rel="noopener" onclick="waGeschickt(${id})">WhatsApp</a><button class="pill sm" onclick="delete waFrage[${id}];leadNeu(${id})">Nein</button></div>` : ''}
-      <button class="pill statuswahl" aria-expanded="false" aria-controls="statusmenu" onclick="statusMenu()"><span class="dot" style="--c:${STATUS[l.status] || STATUS.Neu}"></span><b>${esc(l.status)}</b><span class="muted" aria-hidden="true">▴</span></button>
+      <div class="fussoben"><button class="pill statuswahl" aria-expanded="false" aria-controls="statusmenu" onclick="statusMenu()"><span class="dot" style="--c:${STATUS[l.status] || STATUS.Neu}"></span><b>${esc(l.status)}</b><span class="muted" aria-hidden="true">▴</span></button>${lexAn ? `<button class="pill sel" onclick="angebotOeffnen(${id})">🧾 Angebot</button>` : ''}</div>
       <div class="two">
         ${l.telefon ? `<a class="big" href="${esc(telLink(l))}" onclick="anruf(event, ${id})">${ICON.phone}Anrufen</a>` : '<button class="big" disabled>Keine Nummer</button>'}
         ${l.wa ? `<a class="big wa" href="${esc(l.wa)}" target="_blank" rel="noopener">${ICON.wa}WhatsApp</a>` : ''}
@@ -435,25 +435,73 @@ async function fotosHoch(id, dateien) {
   await fotosLaden(id);
 }
 
-// ---------- Lexware: Kunde und Angebot ----------
-async function kundeAnlegen(id, knopf) {
-  knopf.disabled = true; knopf.textContent = 'Wird angelegt…';
-  try { const j = await api('lexKunde', { id }); Object.assign(leads.find(x => x.id === id) || {}, j.lead, { lex: j.lex }); toast('Kunde in Lexware angelegt'); }
-  catch (e) { toast(e.message); }
-  leadNeu(id);
+// ---------- Lexware: Angebot und Kundendaten ----------
+const euro = n => (Number(n) || 0).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
+const MAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const anrede = l => { const v = (l.name || '').split(' ')[0]; return `Hallo${v ? ' ' + v : ''}`; };
+// Im Kundenfenster oben: Angebot erstellen, letztes Angebot verschicken, E-Mail und Adresse (gehen direkt nach Lexware)
+function kundeBlock(l) {
+  const id = js(l.id), a = l.angebot, k = kundeCache[l.id] || l.kunde || {};
+  const wa = a?.pdf && l.wa ? `${l.wa}?text=${encodeURIComponent(`${anrede(l)}, hier ist dein Angebot ${a.nr} von JD Brüder: ${a.pdf}\nMeld dich gern, wenn du Fragen hast.`)}` : '';
+  const feld = (f, name, extra = '') => `<div class="row"><label for="k-${f}">${name}</label><input id="k-${f}" value="${esc(k[f] || '')}" autocomplete="off" onchange="kundeGeaendert(${id})"${extra}></div>`;
+  // Neues Angebot: Knopf „Angebot“ in der festen Leiste unten, auch mitten im Telefonat ohne Scrollen
+  return `${a ? `<div class="label">Letztes Angebot</div>
+    <div class="card" id="angebotkarte">
+      <p class="angebotzeile"><span><b>${esc(a.nr || 'Angebot')}</b> · ${euro(a.summe)}</span><span class="muted">${a.datum ? 'vom ' + datumKurz(a.datum) : ''}</span></p>
+      ${a.pdf ? `<div class="drei">${wa ? `<a class="pill" href="${esc(wa)}" target="_blank" rel="noopener" onclick="angebotGeschickt(${id}, 'WhatsApp')">${ICON.wa}WhatsApp</a>` : ''}<button class="pill" onclick="angebotMail(${id})">✉️ Mail</button><a class="pill" href="${esc(a.pdf)}" target="_blank" rel="noopener">📄 PDF</a></div>`
+        : `<a class="pill wide" style="margin:0" href="${esc(a.link)}" target="_blank" rel="noopener">Das PDF fehlt noch. In Lexware öffnen ↗</a>`}
+    </div>` : ''}
+    <div class="label">Kundendaten</div>
+    <div class="group" id="kunde">${feld('email', 'E-Mail', ' type="email" inputmode="email" autocapitalize="off"')}${feld('strasse', 'Straße')}${feld('plz', 'PLZ', ' inputmode="numeric" maxlength="10"')}${feld('ort', 'Ort')}</div>
+    <p class="hint">Wird direkt in Lexware gespeichert.${l.lex ? ` <a href="${esc(LEX_APP + 'contacts/view/' + l.lex)}" target="_blank" rel="noopener">Kunde in Lexware ↗</a>` : ''}</p>`;
+}
+const kundeFelder = () => Object.fromEntries(['email', 'strasse', 'plz', 'ort'].map(f => [f, $('#k-' + f)?.value.trim() || '']));
+async function kundeLaden(id) {
+  try {
+    const j = await api('lexDaten', { id }), l = leads.find(x => x.id === id);
+    if (l && j.lex) l.lex = j.lex;
+    kundeCache[id] ||= j.kunde;
+    if (offen === id) for (const [f, v] of Object.entries(j.kunde)) { const el = $('#k-' + f); if (el && !el.value && document.activeElement !== el) el.value = v; }
+  } catch (e) { if (offen === id) toast(e.message); }
+}
+// Feld verlassen: kurz warten (vielleicht kommt gleich das nächste Feld), dann alles auf einmal nach Lexware
+function kundeGeaendert(id) {
+  const k = kundeCache[id] = kundeFelder();
+  clearTimeout(kundeUhr[id]);
+  if (k.email && !MAIL_OK.test(k.email)) return toast('Die E-Mail-Adresse sieht nicht richtig aus.');
+  kundeUhr[id] = setTimeout(async () => {
+    try {
+      const j = await api('lexDaten', { id, speichern: true, ...k }), l = leads.find(x => x.id === id);
+      if (l) l.lex = j.lex;
+      toast('In Lexware gespeichert');
+    } catch (e) { toast(e.message); }
+  }, 800);
+}
+function angebotGeschickt(id, weg) {
+  const nr = leads.find(x => x.id === id)?.angebot?.nr || '';
+  api('speichern', { id, notiz: `Angebot ${nr} per ${weg} geschickt` })
+    .then(j => { Object.assign(leads.find(x => x.id === id) || {}, j.lead); leadNeu(id); }).catch(e => toast(e.message));
+}
+function angebotMail(id) {
+  const l = leads.find(x => x.id === id), a = l?.angebot, email = ($('#k-email')?.value || kundeCache[id]?.email || '').trim();
+  if (!a) return;
+  if (!MAIL_OK.test(email)) { toast('Trag erst die E-Mail-Adresse ein.'); return $('#k-email')?.focus(); }
+  location.href = `mailto:${email}?subject=${encodeURIComponent(`Dein Angebot ${a.nr} von JD Brüder`)}&body=${encodeURIComponent(`${anrede(l)},\n\nhier ist dein Angebot ${a.nr}:\n${a.pdf}\n\nMeld dich gern, wenn du Fragen hast.\n\nViele Grüße\n${konto.name || 'JD Brüder'}\nJD Brüder`)}`;
+  angebotGeschickt(id, 'Mail');
 }
 async function lexPruefen() {
   try { const j = await api('lexArtikel'); lexArtikelCache = j.artikel; toast(`Lexware verbunden: ${j.firma}, ${j.artikel.length} Artikel`); }
   catch (e) { toast(e.message); }
 }
-// Angebotsseite im selben Fenster: Artikel aus Lexware antippen, eigene Positionen dazu, als Entwurf anlegen
-const euro = n => n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
-const angebotPosten = a => [...(a.artikel || []).filter(x => a.menge[x.id]).map(x => ({ artikel: x.id, art: x.art, name: x.name, einheit: x.einheit, steuer: x.steuer, preis: x.preis, menge: a.menge[x.id] })), ...a.eigene];
+// Angebotsseite im selben Fenster, gedacht fürs Telefonat: oben was im Angebot ist, darunter alle Artikel zum Suchen
+const angebotSumme = a => [...(a.artikel || []).filter(x => a.menge[x.id]).map(x => x.preis * a.menge[x.id]), ...a.eigene.map(x => x.preis)].reduce((s, x) => s + x, 0);
 async function angebotOeffnen(id) {
   const notiz = $('#notiz')?.value.trim();   // angefangene Notiz bleibt als Entwurf am Lead
   if (notiz) merke('jdv-entwurf', { ...lies('jdv-entwurf', {}), [id]: notiz });
+  if ($('#kunde')) kundeCache[id] = kundeFelder();
+  const l = leads.find(x => x.id === id), ref = /referenz/i.test(wunsch(l));   // Aktion: 20 % für Referenzkunden
   offen = null;
-  const a = angebot = { id, artikel: lexArtikelCache, menge: {}, eigene: [] };
+  const a = angebot = { id, artikel: lexArtikelCache, menge: {}, eigene: [], rabatt: ref ? 20 : 0, referenz: ref, suche: '' };
   angebotZeichnen(); $('.panel').scrollTop = 0;
   try { lexArtikelCache = (await api('lexArtikel')).artikel; } catch (e) { a.fehler = e.message; }
   if (angebot === a) { a.artikel = lexArtikelCache; angebotZeichnen(); }
@@ -465,40 +513,61 @@ function angebotZeichnen() {
   $('#ep-name').value = name; $('#ep-preis').value = preis; p.scrollTop = top;
 }
 function angebotHtml(a) {
-  const l = leads.find(x => x.id === a.id) || {}, posten = angebotPosten(a), summe = posten.reduce((s, x) => s + x.preis * x.menge, 0);
+  const l = leads.find(x => x.id === a.id) || {}, summe = angebotSumme(a), gewaehlt = (a.artikel || []).filter(x => a.menge[x.id]);
+  const einheit = x => ['Pauschal', 'Stück', 'Aufwand'].includes(x.einheit) ? '' : ' / ' + esc(x.einheit);
+  const zeile = (x, i, liste) => `<div class="row${liste && a.suche && !x.name.toLowerCase().includes(a.suche) ? ' weg' : ''}"><span>${esc(x.name)}<br><span class="muted small">${euro(x.preis)}${einheit(x)}</span></span><span class="menge">${a.menge[x.id] ? `<button class="pill sm" aria-label="${esc(x.name)} weniger" onclick="angebotMenge(${i}, -1)">−</button><b>${a.menge[x.id]}</b>` : ''}<button class="pill sm" aria-label="${esc(x.name)} dazu" onclick="angebotMenge(${i}, 1)">+</button></span></div>`;
   const artikel = !a.artikel ? `<div class="card muted">${esc(a.fehler || 'Artikel werden aus Lexware geladen…')}</div>`
-    : !a.artikel.length ? '<div class="card muted">In Lexware sind noch keine Artikel angelegt. Leg eure Pakete dort unter Artikel an, dann kannst du sie hier antippen. Bis dahin gehen eigene Positionen.</div>'
-    : `<div class="group">${a.artikel.map((x, i) => `<div class="row"><span>${esc(x.name)}<br><span class="muted small">${euro(x.preis)}${x.einheit && x.einheit !== 'Pauschal' ? ' / ' + esc(x.einheit) : ''}</span></span><span class="menge">${a.menge[x.id] ? `<button class="pill sm" aria-label="${esc(x.name)} weniger" onclick="angebotMenge(${i}, -1)">−</button><b>${a.menge[x.id]}</b>` : ''}<button class="pill sm" aria-label="${esc(x.name)} dazu" onclick="angebotMenge(${i}, 1)">+</button></span></div>`).join('')}</div>`;
+    : !a.artikel.length ? '<div class="card muted">In Lexware sind noch keine Artikel angelegt. Bis dahin gehen eigene Positionen.</div>'
+    : `<label class="search">${ICON.search}<input id="a-suche" type="search" placeholder="Artikel suchen" value="${esc(a.suche)}" oninput="angebotFilter(this.value)" aria-label="Artikel suchen"></label>
+      <div class="group" id="artikelliste">${a.artikel.map((x, i) => zeile(x, i, true)).join('')}</div>`;
+  const leer = !gewaehlt.length && !a.eigene.length;
   return `<div class="sheet-head"><button class="pill" onclick="openLead(${js(a.id)})">Zurück</button><h2>Angebot</h2><span></span></div>
-    <p class="hint">Für ${esc(l.name || 'den Kunden')}. Es wird als Entwurf in Lexware angelegt, dort prüfst und verschickst du es.</p>
-    <div class="label">Leistungen aus Lexware</div>${artikel}
+    <p class="hint">Für ${esc(l.name || 'den Kunden')}. Es bekommt eine Nummer und ein PDF, danach schickst du es per WhatsApp oder Mail.</p>
+    <div class="label">Im Angebot</div>
+    <div class="group">${leer ? '<div class="row muted">Noch nichts. Tipp unten bei den Artikeln auf +.</div>' : ''}
+      ${gewaehlt.map(x => zeile(x, a.artikel.indexOf(x))).join('')}
+      ${a.eigene.map((x, i) => `<div class="row"><span>${esc(x.name)}<br><span class="muted small">${euro(x.preis)}</span></span><span class="menge"><button class="pill sm" aria-label="${esc(x.name)} entfernen" onclick="angebot.eigene.splice(${i}, 1); angebotZeichnen()">✕</button></span></div>`).join('')}
+      <div class="row"><span>Rabatt</span><span class="menge"><button class="pill sm${a.referenz ? ' sel' : ''}" aria-pressed="${a.referenz}" onclick="angebotRabatt(${a.referenz ? 0 : 20}, ${!a.referenz})">Referenz 20 %</button><input id="a-rabatt" class="prozent" inputmode="decimal" value="${a.rabatt ? String(a.rabatt).replace('.', ',') : ''}" placeholder="0" onchange="angebotRabatt(this.value, false)" aria-label="Rabatt in Prozent">%</span></div>
+      ${a.rabatt && !leer ? `<div class="row muted"><span>Ohne Rabatt</span><span>${euro(summe)}</span></div>` : ''}
+      <div class="row"><b>Gesamt inkl. MwSt.</b><b>${euro(summe * (1 - a.rabatt / 100))}</b></div></div>
+    <div class="label">Artikel aus Lexware</div>${artikel}
     <div class="label">Eigene Position</div>
-    <div class="group">${a.eigene.map((x, i) => `<div class="row"><span>${esc(x.name)}</span><span class="menge">${euro(x.preis)}<button class="pill sm" aria-label="${esc(x.name)} entfernen" onclick="angebot.eigene.splice(${i}, 1); angebotZeichnen()">✕</button></span></div>`).join('')}
-      <div class="row eigene"><input id="ep-name" placeholder="z. B. Lederpflege" maxlength="255" aria-label="Bezeichnung"><input id="ep-preis" inputmode="decimal" placeholder="€" aria-label="Preis in Euro"><button class="pill sm" aria-label="Position hinzufügen" onclick="eigeneDazu()">+</button></div></div>
+    <div class="group"><div class="row eigene"><input id="ep-name" placeholder="z. B. Lederpflege" maxlength="255" aria-label="Bezeichnung"><input id="ep-preis" inputmode="decimal" placeholder="€" aria-label="Preis in Euro"><button class="pill sm" aria-label="Position hinzufügen" onclick="eigeneDazu()">+</button></div></div>
     <p class="hint">Preise sind Endpreise, so wie der Kunde sie zahlt.</p>
-    <div class="leadfuss"><button class="big gold" id="abtn" onclick="angebotAnlegen()">Angebot anlegen${posten.length ? ' · ' + euro(summe) : ''}</button></div>`;
+    <div class="leadfuss"><button class="big gold" id="abtn" onclick="angebotAnlegen()">Angebot erstellen${leer ? '' : ' · ' + euro(summe * (1 - a.rabatt / 100))}</button></div>`;
+}
+// Suche ohne Neuzeichnen, damit die Tastatur offen bleibt
+function angebotFilter(v) {
+  angebot.suche = v.trim().toLowerCase();
+  document.querySelectorAll('#artikelliste .row').forEach((r, i) => r.classList.toggle('weg', !!angebot.suche && !angebot.artikel[i].name.toLowerCase().includes(angebot.suche)));
 }
 function angebotMenge(i, d) {
   const x = angebot.artikel[i];
   angebot.menge[x.id] = Math.max(0, (angebot.menge[x.id] || 0) + d); angebotZeichnen();
 }
+const zahl = t => Number(String(t).trim().includes(',') ? String(t).trim().replace(/\./g, '').replace(',', '.') : String(t).trim());   // 1.299,50 oder 54.5
+function angebotRabatt(v, referenz) {
+  const n = zahl(v || 0);
+  if (!(n >= 0 && n <= 100)) { toast('Rabatt zwischen 0 und 100 %.'); return angebotZeichnen(); }
+  angebot.rabatt = Math.round(n * 100) / 100; angebot.referenz = referenz && n > 0; angebotZeichnen();
+}
 function eigeneDazu() {
-  const n = $('#ep-name').value.trim(), t = $('#ep-preis').value.trim();
-  const preis = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t);   // 1.299,50 oder 54.5
+  const n = $('#ep-name').value.trim(), t = $('#ep-preis').value.trim(), preis = zahl(t);
   if (!n || !t || !(preis >= 0)) { toast('Gib eine Bezeichnung und einen Preis ein.'); return false; }
-  angebot.eigene.push({ name: n, menge: 1, preis: Math.round(preis * 100) / 100, einheit: 'Pauschal' });
+  angebot.eigene.push({ name: n, menge: 1, preis: Math.round(preis * 100) / 100 });
   $('#ep-name').value = $('#ep-preis').value = ''; angebotZeichnen(); return true;
 }
 async function angebotAnlegen() {
   if (($('#ep-name').value.trim() || $('#ep-preis').value.trim()) && !eigeneDazu()) return;   // getippte Position nicht vergessen
-  const a = angebot, posten = angebotPosten(a), knopf = $('#abtn');
+  const a = angebot, knopf = $('#abtn');
+  const posten = [...(a.artikel || []).filter(x => a.menge[x.id]).map(x => ({ artikel: x.id, menge: a.menge[x.id] })), ...a.eigene];
   if (!posten.length) return toast('Wähl mindestens eine Leistung aus.');
-  knopf.disabled = true; knopf.textContent = 'Wird in Lexware angelegt…';
+  knopf.disabled = true; knopf.textContent = 'Wird erstellt, dauert ein paar Sekunden…';
   try {
-    const j = await api('lexAngebot', { id: a.id, posten });
-    Object.assign(leads.find(x => x.id === a.id) || {}, j.lead, { lex: j.lex }); lexLink[a.id] = j.link;
-    if (angebot === a) openLead(a.id);
-    toast('Angebot als Entwurf in Lexware angelegt'); render();
+    const j = await api('lexAngebot', { id: a.id, posten, rabatt: a.rabatt, referenz: a.referenz });
+    Object.assign(leads.find(x => x.id === a.id) || {}, j.lead, { lex: j.lex, angebot: j.angebot });
+    if (angebot === a) { openLead(a.id); $('#angebotkarte')?.scrollIntoView({ block: 'center' }); }
+    toast(`Angebot ${j.angebot.nr} erstellt. Jetzt per WhatsApp oder Mail schicken.`); render();
   } catch (e) { toast(e.message); if (angebot === a) angebotZeichnen(); }
 }
 
@@ -703,13 +772,21 @@ function demoApi(aktion, d) {
     if (aktion === 'vorlage') return ok({});
     if (aktion === 'fotos') return ok({ fotos: [], ordner: '' });
     const vermerk = t => { l.notizen = (l.notizen ? l.notizen + '\n\n' : '') + `${jetzt} ${konto.name || 'Demo'}: ${t}`; };
-    if (aktion === 'lexArtikel') return ok({ firma: 'JD Brüder (Demo)', artikel: [['a1', 'Außenwäsche', 49], ['a2', 'Innenreinigung', 129], ['a3', 'Keramikversiegelung', 699], ['a4', 'Politur', 249]]
-      .map(([id, name, preis]) => ({ id, name, preis, art: 'SERVICE', einheit: 'Pauschal', steuer: 19 })) });
-    if (aktion === 'lexKunde') { if (!l.lex) vermerk('In Lexware als Kunde angelegt'); l.lex = 'demo'; return ok({ lead: kopie(l), lex: 'demo' }); }
+    const artikel = [['a1', 'Auftragspauschale', 58, 'Stück'], ['a2', 'Einfache Handwäsche Mittel & Oberklasse', 101.15, 'Stück'],
+      ['a3', 'Interieur Aufbereitung', 226.1, 'Stück'], ['a4', 'Lackaufbereitung One-Step-Politur', 380.8, 'Aufwand'], ['a5', 'Polierarbeiten', 65.45, 'Stunde'],
+      ['a6', 'Reinigung & Pflege von Ledersitzen', 41.65, 'Stück'], ['a7', '2 Stufen Keramikversiegelung', 714, 'Stück']].map(([id, name, preis, einheit]) => ({ id, name, preis, einheit }));
+    if (aktion === 'lexArtikel') return ok({ firma: 'JD Brüder (Demo)', artikel });
+    if (aktion === 'lexDaten') {
+      if (d.speichern) l.kunde = { email: d.email, strasse: d.strasse, plz: d.plz, ort: d.ort };
+      l.lex = l.lex || (d.speichern ? 'demo' : '');
+      return ok({ lex: l.lex, kunde: l.kunde || { email: '', strasse: '', plz: '', ort: '' } });
+    }
     if (aktion === 'lexAngebot') {
-      l.lex = 'demo';
-      vermerk(`Angebot in Lexware angelegt (Entwurf, ${euro(d.posten.reduce((s, x) => s + x.menge * x.preis, 0))}): ${d.posten.map(x => (x.menge === 1 ? '' : x.menge + '× ') + x.name).join(', ')}`);
-      return ok({ lead: kopie(l), lex: 'demo', link: 'https://app.lexware.de/' });
+      const art = Object.fromEntries(artikel.map(a => [a.id, a]));
+      const summe = d.posten.reduce((s, x) => s + x.menge * (x.artikel ? art[x.artikel].preis : x.preis), 0) * (1 - (d.rabatt || 0) / 100);
+      l.lex = 'demo'; l.angebot = { nr: 'AG' + String(50 + Math.floor(Math.random() * 50)).padStart(4, '0'), summe, pdf: 'https://example.com/angebot.pdf', link: 'https://app.lexware.de/', datum: heute() };
+      vermerk(`Angebot ${l.angebot.nr} erstellt (${euro(summe)}${d.rabatt ? `, ${d.rabatt} % Rabatt` : ''}): ${d.posten.map(x => (x.menge === 1 ? '' : x.menge + '× ') + (x.artikel ? art[x.artikel].name : x.name)).join(', ')}`);
+      return ok({ lead: kopie(l), lex: 'demo', angebot: l.angebot });
     }
     if (aktion === 'speichern') {
       if (d.status !== undefined) l.status = d.status;

@@ -11,7 +11,7 @@
  *   TEAM_PASSWORT      Passwort, mit dem sich das Team in der App anmeldet
  *   ANTHROPIC_API_KEY  Claude-Schlüssel für die KI-Zusammenfassung (beginnt mit sk-ant-api)
  *   PUSH_GEHEIMNIS     Geheimnis für den Push-Dienst (push/worker.js), gleich wie GEHEIMNIS bei Cloudflare
- *   LEXWARE_API_KEY    Schlüssel aus Lexware Office (Einstellungen > Öffentliche API), für Kunden und Angebote
+ *   LEXWARE_API_KEY    Schlüssel aus Lexware Office (Einstellungen > Öffentliche API): neue Leads werden Kunden, Angebote mit PDF
  *
  * Nach dem Einfügen einmal die Funktion vertriebEinrichten ausführen: Sie fragt die Berechtigungen ab
  * (Drive für Fotos) und legt die Zeitauslöser für die Benachrichtigungen an.
@@ -23,6 +23,9 @@ const STATUS = ['Offen', 'Zurückrufen', 'Terminiert', 'Nicht erreicht', 'Unqual
 const TECHNIK = ['id', 'created_time', 'ad_id', 'ad_name', 'adset_id', 'adset_name', 'campaign_id', 'campaign_name',
   'form_id', 'form_name', 'is_organic', 'platform', 'full_name', 'phone_number', 'lead_status', 'Notiz', 'Notizen', 'Termin'];
 const MUELL = new Set(TECHNIK.concat(['CREATED', 'email'])); // was Meta beim Eintragen in falsche Zellen schreibt
+// Kundendaten aus dem Meta-Formular (falls abgefragt). Stehen im Kundenbereich der App, nicht bei den Antworten.
+const KUNDENFELDER = { email: ['email', 'e-mail', 'e_mail'], strasse: ['street_address', 'straße', 'strasse', 'adresse'],
+  plz: ['post_code', 'zip_code', 'zip', 'postleitzahl', 'plz'], ort: ['city', 'stadt', 'ort', 'wohnort'] };
 const KI_EINTRAG = /^\d\d\.\d\d\.\d\d \d\d:\d\d KI: /;
 const AKTIV = ['Neu', 'Offen', 'Nicht erreicht', 'Zurückrufen', 'Terminiert']; // wie in der App
 const APP_URL = 'https://jdbrueder-collab.github.io/jd-vertrieb/';
@@ -39,7 +42,7 @@ function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
     pruefe(d.pw);
-    const aktion = { liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos, vorlage, lexArtikel, lexKunde, lexAngebot }[d.aktion];
+    const aktion = { liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos, vorlage, lexArtikel, lexDaten, lexAngebot }[d.aktion];
     if (!aktion) throw fehler('aktion', 'Unbekannte Aktion.');
     out = Object.assign({ ok: true }, aktion(d));
   } catch (err) {
@@ -118,9 +121,10 @@ function alsLead(t, z, a) {
   const antworten = [];
   t.kopf.forEach((h, i) => {
     const v = String(a[i]).trim();
-    if (h && !TECHNIK.includes(h) && v && !MUELL.has(v)) antworten.push([gross(h.replace(/_/g, ' ')), gross(v)]);
+    if (h && !TECHNIK.includes(h) && !Object.values(KUNDENFELDER).some((n) => n.includes(h.toLowerCase())) && v && !MUELL.has(v)) antworten.push([gross(h.replace(/_/g, ' ')), gross(v)]);
   });
   const status = text('lead_status');
+  const feld = (k) => { const i = t.kopf.findIndex((h) => KUNDENFELDER[k].includes(h.toLowerCase())); const v = i < 0 ? '' : String(z[i]).trim(); return MUELL.has(v) ? '' : v; };
   return {
     id: t.id + '~' + text('id'),
     datum: zeit(...zelle('created_time')),
@@ -135,6 +139,7 @@ function alsLead(t, z, a) {
     naechster: zeit(...zelle('Termin'), true),
     notizen: eintraege.filter((e) => !KI_EINTRAG.test(e)).join('\n\n'),
     ki: ki.replace(KI_EINTRAG, ''),
+    kunde: { email: /@/.test(feld('email')) ? feld('email') : '', strasse: feld('strasse'), plz: feld('plz'), ort: feld('ort') },
   };
 }
 
@@ -170,7 +175,10 @@ function liste() {
   });
   leads.sort((a, b) => b.datum.localeCompare(a.datum));
   const alle = props().getProperties();
-  leads.forEach((l) => { l.lex = alle['LEX_' + l.id] || ''; });   // Kontakt in Lexware, falls schon angelegt
+  leads.forEach((l) => {   // Kontakt in Lexware und letztes Angebot, falls vorhanden
+    l.lex = alle['LEX_' + l.id] || '';
+    l.angebot = alle['ANGEBOT_' + l.id] ? JSON.parse(alle['ANGEBOT_' + l.id]) : null;
+  });
   return { lexware: !!alle.LEXWARE_API_KEY, leads, tabellen, heimUrl: SpreadsheetApp.getActiveSpreadsheet().getUrl(), vorlage: props().getProperty('WA_VORLAGE') || '' };
 }
 
@@ -368,9 +376,14 @@ function meldeNeueLeads() {
   props().setProperties({ PUSH_STAND: stand, PUSH_BEKANNT: JSON.stringify(frisch.map((l) => l.id.split('~')[1])) });
   if (alt === null) return; // erster Lauf: nur merken
   const neu = frisch.filter((l) => !JSON.parse(alt).includes(l.id.split('~')[1]));
-  if (neu.length === 1) sende('🔔 Neuer Lead: ' + (neu[0].name || 'ohne Namen'), neu[0].antworten.map((a) => a[1]).join(' · ') || neu[0].telefon,
-    APP_URL + '#lead=' + encodeURIComponent(neu[0].id));
-  else if (neu.length) sende('🔔 ' + neu.length + ' neue Leads', neu.map((l) => l.name || l.telefon).join(', '), APP_URL);
+  try {
+    if (neu.length === 1) sende('🔔 Neuer Lead: ' + (neu[0].name || 'ohne Namen'), neu[0].antworten.map((a) => a[1]).join(' · ') || neu[0].telefon,
+      APP_URL + '#lead=' + encodeURIComponent(neu[0].id));
+    else if (neu.length) sende('🔔 ' + neu.length + ' neue Leads', neu.map((l) => l.name || l.telefon).join(', '), APP_URL);
+  } finally {
+    // Jede neue Anfrage wird gleich Kunde in Lexware. Klappt es nicht, passiert es beim ersten Angebot oder bei den Kundendaten.
+    if (props().getProperty('LEXWARE_API_KEY')) neu.forEach((l) => { try { lexKontakt(l.id, l); } catch (e) { console.warn('Lexware: ' + e.message); } });
+  }
 }
 
 // Zeitauslöser morgens um 8: alle Leads, bei denen heute oder früher ein Rückruf oder Termin ansteht.
@@ -429,19 +442,27 @@ function fotos(d) {
   return { fotos: liste, ordner: ordner.getUrl() };
 }
 
-// ---------- Lexware Office: Kunde anlegen und Angebotsentwurf ----------
-// Die Schnittstelle gibt es ab Tarif XL. Pro Lead merkt sich das Skript die Kontakt-id (LEX_<Lead-id>),
-// damit kein Kunde doppelt entsteht. Angebote bleiben Entwurf: prüfen und verschicken geht in Lexware.
+// ---------- Lexware Office: Kunden und Angebote ----------
+// Die Schnittstelle gibt es ab Tarif XL. Jede neue Anfrage wird sofort Kunde (meldeNeueLeads). Pro Lead merkt sich
+// das Skript die Kontakt-id (LEX_<Lead-id>) und das letzte Angebot (ANGEBOT_<Lead-id>). Angebote werden fertig
+// angelegt, mit Nummer und PDF. Das PDF liegt im Drive-Ordner des Kunden, die App schickt den Link per WhatsApp oder Mail.
 const LEX_APP = 'https://app.lexware.de/permalink/';
+const LEX_EINLEITUNG = 'Gerne bieten wir Ihnen an:';   // eure Standardtexte aus Lexware
+const LEX_SCHLUSS = 'Wir freuen uns auf Ihre Auftragserteilung und sichern eine einwandfreie Ausführung zu.';
+let lexZuletzt = 0;
 
-function lex(pfad, body) {
+function lex(pfad, body, methode, pdf) {
   const key = String(props().getProperty('LEXWARE_API_KEY') || '').trim();
   if (!key) throw fehler('lexware', 'Lexware ist noch nicht verbunden (LEXWARE_API_KEY fehlt in den Skripteigenschaften).');
-  const opt = { method: body ? 'post' : 'get', headers: { Authorization: 'Bearer ' + key, Accept: 'application/json' }, muteHttpExceptions: true };
+  const opt = { method: methode || (body ? 'post' : 'get'), headers: { Authorization: 'Bearer ' + key, Accept: pdf ? 'application/pdf' : 'application/json' }, muteHttpExceptions: true };
   if (body) Object.assign(opt, { contentType: 'application/json', payload: JSON.stringify(body) });
   for (let versuch = 0; ; versuch++) {
+    const warte = lexZuletzt + 550 - Date.now();   // Lexware erlaubt 2 Anfragen pro Sekunde
+    if (warte > 0) Utilities.sleep(warte);
+    lexZuletzt = Date.now();
     const res = UrlFetchApp.fetch('https://api.lexware.io' + pfad, opt), code = res.getResponseCode();
-    if (code === 429 && versuch < 3) { Utilities.sleep(1000); continue; }   // Lexware erlaubt 2 Anfragen pro Sekunde
+    if ((code === 429 || (pdf && (code === 404 || code === 409))) && versuch < 3) { Utilities.sleep(1500); continue; }   // zu schnell, oder PDF noch nicht fertig
+    if (pdf && code < 300) return res.getBlob();
     let j = {};
     try { j = JSON.parse(res.getContentText() || '{}'); } catch (e) { }
     if (code < 300) return j;
@@ -451,28 +472,56 @@ function lex(pfad, body) {
   }
 }
 
-// Firmendaten einmal holen und 6 Stunden merken: Name fürs Setup, Kleinunternehmer heißt ohne Umsatzsteuer
+// Firmendaten einmal holen und 6 Stunden merken: Name fürs Setup und wie Preise gerechnet werden (netto, brutto, ohne Steuer)
 function lexProfil() {
   const c = CacheService.getScriptCache(), z = c.get('LEX_PROFIL');
   if (z) return JSON.parse(z);
-  const p = lex('/v1/profile'), kurz = { firma: p.companyName || '', ohneSteuer: !!p.smallBusiness || p.taxType === 'vatfree' };
+  const p = lex('/v1/profile');
+  const kurz = { firma: p.companyName || '', ohneSteuer: !!p.smallBusiness || p.taxType === 'vatfree', brutto: p.taxType === 'gross' };
   c.put('LEX_PROFIL', JSON.stringify(kurz), 21600);
   return kurz;
 }
 
-// Artikel aus Lexware (eure Pakete und Leistungen) mit Endpreis
+// shortcut: höchstens 250 Artikel (eine Seite), JD Brüder hat gut 80
+const lexArtikelRoh = () => (lex('/v1/articles?size=250').content || []).filter((a) => !a.archived);
+const lexBrutto = (pr) => (pr.grossPrice != null ? pr.grossPrice : Math.round((pr.netPrice || 0) * (100 + (Number(pr.taxRate) || 0))) / 100);
+const euro = (n) => (Number(n) || 0).toFixed(2).replace('.', ',') + ' €';
+
+// Artikel für die App, mit Endpreis (so wie der Kunde zahlt)
 function lexArtikel() {
   const p = lexProfil();
-  const artikel = (lex('/v1/articles?size=250').content || []).filter((a) => !a.archived).map((a) => {
-    const pr = a.price || {}, steuer = p.ohneSteuer ? 0 : Number(pr.taxRate) || 0;
-    const brutto = pr.grossPrice != null ? pr.grossPrice : Math.round((pr.netPrice || 0) * (100 + steuer)) / 100;
-    return { id: a.id, name: a.title || '', art: a.type, einheit: a.unitName || 'Stück', steuer, preis: p.ohneSteuer ? pr.netPrice || 0 : brutto };
-  });
-  artikel.sort((a, b) => a.name.localeCompare(b.name));
+  const artikel = lexArtikelRoh().map((a) => ({ id: a.id, name: String(a.title || '').trim(), einheit: a.unitName || 'Stück', preis: p.ohneSteuer ? (a.price || {}).netPrice || 0 : lexBrutto(a.price || {}) }));
+  artikel.sort((a, b) => a.name.localeCompare(b.name, 'de'));
   return { firma: p.firma, artikel };
 }
 
-function lexKontakt(appId, l) {
+// E-Mail und Adresse prüfen. Leere Felder ändern in Lexware nichts.
+function kundeAus(d) {
+  const f = (k, n) => String(d[k] || '').trim().slice(0, n);
+  const k = { email: f('email', 100), strasse: f('strasse', 100), plz: f('plz', 10), ort: f('ort', 100) };
+  if (k.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(k.email)) throw fehler('email', 'Die E-Mail-Adresse sieht nicht richtig aus.');
+  return k;
+}
+// Kundendaten in einen Lexware-Kontakt schreiben (Lexware erlaubt je Liste nur einen Eintrag)
+function lexKontaktDaten(c, k) {
+  if (k.email) {
+    const art = ['business', 'private', 'office', 'other'].find((a) => ((c.emailAddresses || {})[a] || []).length) || 'private';
+    c.emailAddresses = Object.assign(c.emailAddresses || {}, { [art]: [k.email] });
+  }
+  const adr = { street: k.strasse, zip: k.plz, city: k.ort };
+  Object.keys(adr).forEach((x) => { if (!adr[x]) delete adr[x]; });
+  if (Object.keys(adr).length) {
+    const alt = ((c.addresses || {}).billing || [])[0] || {};
+    c.addresses = Object.assign(c.addresses || {}, { billing: [Object.assign(alt, adr, { countryCode: alt.countryCode || 'DE' })] });
+  }
+  return c;
+}
+const lexKundeAus = (c) => {
+  const a = ((c.addresses || {}).billing || [])[0] || {}, m = c.emailAddresses || {};
+  return { email: ['business', 'private', 'office', 'other'].map((x) => (m[x] || [])[0]).find(Boolean) || '', strasse: a.street || '', plz: a.zip || '', ort: a.city || '' };
+};
+
+function lexKontakt(appId, l, k) {
   const key = 'LEX_' + appId;
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
@@ -482,6 +531,7 @@ function lexKontakt(appId, l) {
     const kontakt = { version: 0, roles: { customer: {} }, person: { firstName: teile.join(' ') || undefined, lastName: nachname },
       note: ('Aus JD Vertrieb. ' + l.antworten.map((a) => a.join(': ')).join(', ')).slice(0, 1000) };
     if (l.telefon) kontakt.phoneNumbers = { mobile: [l.telefon] };
+    lexKontaktDaten(kontakt, k || l.kunde || {});
     const id = lex('/v1/contacts', kontakt).id;
     props().setProperty(key, id);
     return id;
@@ -490,38 +540,72 @@ function lexKontakt(appId, l) {
   }
 }
 
-// Lead als Kunden in Lexware anlegen (passiert beim ersten Angebot auch von selbst)
-function lexKunde(d) {
-  if (props().getProperty('LEX_' + d.id)) return { lex: props().getProperty('LEX_' + d.id) };
-  const { t, zeile } = finde(d.id), id = lexKontakt(d.id, leseZeile(t, zeile));
-  return Object.assign(speichern({ id: d.id, wer: d.wer, notiz: 'In Lexware als Kunde angelegt' }), { lex: id });
+// Kundendaten lesen (ohne speichern) oder in Lexware speichern. Gibt es den Kunden noch nicht, wird er angelegt.
+function lexDaten(d) {
+  const id = props().getProperty('LEX_' + d.id);
+  if (!d.speichern) {
+    if (id) return { lex: id, kunde: lexKundeAus(lex('/v1/contacts/' + id)) };
+    const { t, zeile } = finde(d.id);
+    return { lex: '', kunde: leseZeile(t, zeile).kunde };
+  }
+  const k = kundeAus(d);
+  if (!id) { const { t, zeile } = finde(d.id); return { lex: lexKontakt(d.id, leseZeile(t, zeile), k), kunde: k }; }
+  for (let versuch = 0; ; versuch++) {
+    const c = lexKontaktDaten(lex('/v1/contacts/' + id), k);
+    try { lex('/v1/contacts/' + id, c, 'put'); return { lex: id, kunde: lexKundeAus(c) }; }
+    catch (e) { if (versuch || !/ 409/.test(e.message)) throw e; }   // gerade woanders geändert: neu lesen und nochmal
+  }
 }
 
-// Angebotsentwurf aus den gewählten Leistungen. Preise sind Endpreise, wie der Kunde sie zahlt.
+// Angebot mit Nummer und PDF. Artikelpreise kommen frisch aus Lexware, eigene Positionen sind Endpreise.
 function lexAngebot(d) {
-  const posten = (Array.isArray(d.posten) ? d.posten : []).map((x) => ({
-    artikel: String(x.artikel || ''), art: x.art, name: String(x.name || '').trim().slice(0, 255), einheit: String(x.einheit || 'Pauschal').slice(0, 50),
-    menge: Number(x.menge), preis: Math.round(Number(x.preis) * 100) / 100, steuer: [0, 7, 19].includes(Number(x.steuer)) ? Number(x.steuer) : 19,
-  })).filter((x) => x.name && x.menge > 0 && x.menge <= 1000 && x.preis >= 0 && x.preis < 1e6);
+  const p = lexProfil(), artikel = {};
+  lexArtikelRoh().forEach((a) => { artikel[a.id] = a; });
+  const posten = (Array.isArray(d.posten) ? d.posten : []).slice(0, 50).map((x) => {
+    const menge = Number(x.menge);
+    if (!(menge > 0 && menge <= 1000)) return null;
+    const a = x.artikel && artikel[x.artikel];
+    if (x.artikel && !a) throw fehler('artikel', 'Ein Artikel ist in Lexware nicht mehr da. Öffne das Angebot neu.');
+    if (a) {
+      const pr = a.price || {};
+      return { a, name: String(a.title || '').trim().slice(0, 255), menge, einheit: a.unitName || 'Stück', steuer: p.ohneSteuer ? 0 : Number(pr.taxRate) || 0,
+        netto: pr.netPrice || 0, brutto: p.ohneSteuer ? pr.netPrice || 0 : lexBrutto(pr) };
+    }
+    const name = String(x.name || '').trim().slice(0, 255), brutto = Math.round(Number(x.preis) * 100) / 100, steuer = p.ohneSteuer ? 0 : 19;
+    if (!name || !(brutto >= 0 && brutto < 1e6)) return null;
+    return { name, menge, einheit: 'Pauschal', steuer, brutto, netto: Math.round(brutto / (1 + steuer / 100) * 100) / 100 };
+  }).filter(Boolean);
   if (!posten.length) throw fehler('leer', 'Wähl mindestens eine Leistung aus.');
-  if (posten.length > 50) throw fehler('leer', 'Höchstens 50 Positionen.');
-  const p = lexProfil(), { t, zeile } = finde(d.id), l = leseZeile(t, zeile);
+  const rabatt = Math.round(Math.min(100, Math.max(0, Number(d.rabatt) || 0)) * 100) / 100, rabattText = String(rabatt).replace('.', ',') + ' %';
+  const { t, zeile } = finde(d.id), l = leseZeile(t, zeile);
   const kontakt = lexKontakt(d.id, l), auto = (l.antworten.find((a) => a[0] === 'Fahrzeug') || [])[1] || '';
   const datum = (tage) => berlin(new Date(Date.now() + tage * 864e5), "yyyy-MM-dd'T'HH:mm:ss.SSSXXX");
-  const angebot = lex('/v1/quotations', {
+  const id = lex('/v1/quotations?finalize=true', {
     voucherDate: datum(0), expirationDate: datum(30),
     address: { contactId: kontakt },
-    lineItems: posten.map((x) => Object.assign(x.artikel ? { id: x.artikel } : {}, {
-      type: !x.artikel ? 'custom' : x.art === 'PRODUCT' ? 'material' : 'service',
+    lineItems: posten.map((x) => Object.assign(x.a ? { id: x.a.id, type: x.a.type === 'PRODUCT' ? 'material' : 'service' } : { type: 'custom' }, {
       name: x.name, quantity: x.menge, unitName: x.einheit,
-      unitPrice: p.ohneSteuer ? { currency: 'EUR', netAmount: x.preis, taxRatePercentage: 0 } : { currency: 'EUR', grossAmount: x.preis, taxRatePercentage: x.steuer },
-    })),
-    totalPrice: { currency: 'EUR' },
-    taxConditions: { taxType: p.ohneSteuer ? 'vatfree' : 'gross' },
+      unitPrice: p.brutto ? { currency: 'EUR', grossAmount: x.brutto, taxRatePercentage: x.steuer } : { currency: 'EUR', netAmount: x.netto, taxRatePercentage: x.steuer },
+    }, x.a && x.a.description ? { description: String(x.a.description).slice(0, 2000) } : {})),
+    totalPrice: Object.assign({ currency: 'EUR' }, rabatt ? { totalDiscountPercentage: rabatt } : {}),
+    taxConditions: { taxType: p.ohneSteuer ? 'vatfree' : p.brutto ? 'gross' : 'net' },
     title: 'Angebot',
-    introduction: auto ? 'Fahrzeug: ' + auto : undefined,
-  });
-  const summe = posten.reduce((s, x) => s + x.menge * x.preis, 0).toFixed(2).replace('.', ',');
-  const notiz = 'Angebot in Lexware angelegt (Entwurf, ' + summe + ' €): ' + posten.map((x) => (x.menge === 1 ? '' : x.menge + '× ') + x.name).join(', ');
-  return Object.assign(speichern({ id: d.id, wer: d.wer, notiz }), { lex: kontakt, link: LEX_APP + 'quotations/edit/' + angebot.id });
+    introduction: [auto && 'Fahrzeug: ' + auto, d.referenz && rabatt ? 'Als Referenzkunde erhalten Sie ' + rabattText + ' Rabatt.' : '', LEX_EINLEITUNG].filter(Boolean).join('\n'),
+    remark: LEX_SCHLUSS,
+  }).id;
+  // Nummer, Summe und PDF. Das Angebot gibt es ab hier, deshalb geht ein Fehler danach nicht mehr verloren.
+  const summe = posten.reduce((s, x) => s + x.menge * x.brutto, 0) * (1 - rabatt / 100);
+  const angebot = { nr: '', summe: Math.round(summe * 100) / 100, pdf: '', link: LEX_APP + 'quotations/view/' + id, datum: berlin(new Date(), 'yyyy-MM-dd') };
+  try {
+    const q = lex('/v1/quotations/' + id);
+    angebot.nr = q.voucherNumber || '';
+    if ((q.totalPrice || {}).totalGrossAmount != null) angebot.summe = q.totalPrice.totalGrossAmount;
+    const datei = fotoOrdner(d.id, true).createFile(lex('/v1/quotations/' + id + '/file', null, 'get', true).setName('Angebot ' + (angebot.nr || id) + '.pdf'));
+    try { datei.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) { }
+    angebot.pdf = datei.getUrl();
+  } catch (e) { console.warn('Angebot ' + id + ': ' + e.message); }
+  props().setProperty('ANGEBOT_' + d.id, JSON.stringify(angebot));
+  const notiz = 'Angebot ' + (angebot.nr || '') + ' erstellt (' + euro(angebot.summe) + (rabatt ? ', ' + rabattText + ' Rabatt' : '') + '): '
+    + posten.map((x) => (x.menge === 1 ? '' : String(x.menge).replace('.', ',') + '× ') + x.name).join(', ');
+  return Object.assign(speichern({ id: d.id, wer: d.wer, notiz: notiz.replace('Angebot  ', 'Angebot ') }), { lex: kontakt, angebot });
 }
