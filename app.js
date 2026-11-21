@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '9';
+const VERSION = '10';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -166,7 +166,8 @@ function renderSetup() {
     ${tabellen.filter(t => t.fehler).map(t => `<p class="hint" style="color:var(--minus)">${esc(t.name)}: ${esc(t.fehler)}</p>`).join('')}
     <p class="hint">Neue Kampagne? Tipp auf „Tabelle verbinden“ und setz den Link zur neuen Lead-Tabelle in die nächste freie Zeile in Spalte A.</p>
     <div class="label">Design</div>
-    <div class="two">${[['dunkel', '🌙 Dunkel'], ['hell', '☀️ Hell']].map(([k, t]) => `<button class="pill ${lies('jdv-design', 'dunkel') === k ? 'sel' : ''}" aria-pressed="${lies('jdv-design', 'dunkel') === k}" onclick="designSetzen('${k}')">${t}</button>`).join('')}</div>
+    <div class="two">${[['dunkel', '🌙 Dunkel'], ['hell', '☀️ Hell']].map(([k, t]) => `<button class="pill ${lies('jdv-design', 'dunkel') === k ? 'sel' : ''}" aria-pressed="${lies('jdv-design', 'dunkel') === k}" onclick="designSetzen('design', '${k}')">${t}</button>`).join('')}</div>
+    <div class="group"><label class="row"><span>✨ Gold im Hintergrund</span><input type="checkbox" switch ${lies('jdv-gold', true) ? 'checked' : ''} onchange="designSetzen('gold', this.checked)"></label></div>
     <div class="label">App</div>
     <div class="group">
       <button class="row" onclick="installHilfe()"><span>📲 Auf den Startbildschirm</span><span>›</span></button>
@@ -177,11 +178,13 @@ function renderSetup() {
     ${DEMO ? '' : '<button class="pill wide" style="color:var(--minus);margin-top:var(--gap-l)" onclick="abmelden()">Abmelden</button>'}`;
 }
 
-// Dunkel oder Hell, gilt nur für dieses Handy. Gesetzt wird es beim Start schon in index.html.
-function designSetzen(d) {
-  merke('jdv-design', d);
-  document.documentElement.classList.toggle('hell', d === 'hell');
-  $('meta[name=theme-color]').content = d === 'hell' ? '#f4efe5' : '#0d0b08';
+// Dunkel/Hell und Gold im Hintergrund, gilt nur für dieses Handy. Beim Start setzt index.html das schon vor dem ersten Bild.
+function designSetzen(art, wert) {
+  merke('jdv-' + art, wert);
+  const h = document.documentElement;
+  h.classList.toggle('hell', lies('jdv-design', 'dunkel') === 'hell');
+  h.classList.toggle('ohnegold', lies('jdv-gold', true) === false);
+  $('meta[name=theme-color]').content = getComputedStyle(h).getPropertyValue('--bg').trim();
   render();
 }
 

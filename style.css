@@ -88,6 +88,7 @@ input,select,textarea{font:inherit;font-size:16px;color:var(--txt);background:rg
 input:focus-visible,textarea:focus-visible{box-shadow:0 0 0 2px var(--accent)}
 .row>input{width:55%;text-align:right;min-height:44px}
 .row>input[type=date],.datum input{width:auto}
+.row>input[type=checkbox]{width:auto;min-height:0;padding:0;background:none;accent-color:var(--accent)}
 .datum{display:flex;align-items:center;gap:var(--gap-s)}
 /* Lead-Fenster: Status und Anrufen/WhatsApp bleiben unten fest stehen, wie die Tab-Leiste */
 .panel:has(> .leadfuss){padding-bottom:0}
@@ -205,6 +206,9 @@ html.hell .tab-ind{background:rgba(0,0,0,.07);box-shadow:none}
 html.hell .fbbtn{color:#c08a12}
 html.hell .toast{background:rgba(255,255,255,.94);box-shadow:0 10px 40px rgba(0,0,0,.18)}
 html.hell .demo{background:color-mix(in srgb,var(--accent) 18%,rgba(255,255,255,.92))}
+/* Ohne Gold im Hintergrund: schlichtes Schwarz oder Hellgrau, ohne die warmen Lichtflecken */
+html.ohnegold{--bg:#0a0a0a;--bgimg:none}
+html.hell.ohnegold{--bg:#f2f2f4}
 /* Gold als Schrift auf Hell: etwas dunkler, damit es lesbar bleibt */
 html.hell :is(.tab-hi,.statusmenu [aria-pressed=true]){color:#8a6a2c}
 
