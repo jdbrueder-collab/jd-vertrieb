@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '23';
+const VERSION = '24';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -37,7 +37,7 @@ const TEXT_STANDARD = {
   TEXT_MAIL_BETREFF: 'Dein Angebot {Nr} von JD Brüder',
   TEXT_MAIL: 'Hallo {Name},\n\nim Anhang findest du dein Angebot {Nr}.\n\nMeld dich gern, wenn du Fragen hast.\n\nViele Grüße\n{Ich}\nJD Brüder',
 };
-let texte = { ...TEXT_STANDARD };
+let texte = { ...TEXT_STANDARD }, skriptAlt = false;   // skriptAlt: Google-Skript ohne „texte“, kann nur den Nicht-erreicht-Text
 // Lexware: Angebot und Kundendaten (nur sichtbar, wenn im Google-Skript ein Schlüssel hinterlegt ist)
 const LEX_APP = 'https://app.lexware.de/permalink/';
 let lexAn = false, lexArtikelCache = null, angebot = null;   // angebot: gerade offene Angebotsseite
@@ -58,7 +58,7 @@ async function api(aktion, daten = {}) {
   if (!j.ok) throw Object.assign(new Error(j.fehler || 'Fehler'), { code: j.code });
   return j;
 }
-function uebernimm(j) { leads = j.leads; tabellen = j.tabellen || []; heimUrl = j.heimUrl || ''; texte = { ...TEXT_STANDARD, ...j.texte }; lexAn = DEMO || !!j.lexware; stand = new Date(); }
+function uebernimm(j) { leads = j.leads; tabellen = j.tabellen || []; heimUrl = j.heimUrl || ''; texte = { ...TEXT_STANDARD, ...j.texte }; skriptAlt = !DEMO && !j.texte; lexAn = DEMO || !!j.lexware; stand = new Date(); }
 async function laden(still) {
   if (!angemeldet() || laedt) return;
   laedt = true; $('.roundbtn')?.classList.add('spin');
@@ -279,6 +279,7 @@ async function textSpeichern(k, knopf) {
   if ($('#tbetreff')) neu.TEXT_MAIL_BETREFF = $('#tbetreff').value.trim();
   if (Object.values(neu).some(t => !t)) return toast('Leer geht nicht. Für den Standard tipp auf „Standardtext einsetzen“.');
   if (k === 'WA_VORLAGE' && (!neu[k].includes('{Name}') || !neu[k].includes('{Wunsch}'))) return toast('{Name} und {Wunsch} müssen in der Nachricht bleiben.');
+  if (skriptAlt) return toast('Bei Google läuft noch das alte Skript. Erst Code.gs ersetzen und eine neue Version bereitstellen, dann klappt das Sichern.');
   knopf.disabled = true;
   try {
     // Gleich wie der Standard: leer speichern, dann gilt auch ein später verbesserter Standard
