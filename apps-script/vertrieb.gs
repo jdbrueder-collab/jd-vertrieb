@@ -180,7 +180,8 @@ function liste() {
     l.lex = alle['LEX_' + l.id] || '';
     l.angebot = alle['ANGEBOT_' + l.id] ? JSON.parse(alle['ANGEBOT_' + l.id]) : null;
   });
-  return { lexware: !!alle.LEXWARE_API_KEY, leads, tabellen, heimUrl: SpreadsheetApp.getActiveSpreadsheet().getUrl(), vorlage: props().getProperty('WA_VORLAGE') || '' };
+  return { lexware: !!alle.LEXWARE_API_KEY, leads, tabellen, heimUrl: SpreadsheetApp.getActiveSpreadsheet().getUrl(),
+    texte: Object.fromEntries(TEXTE.filter((k) => alle[k]).map((k) => [k, alle[k]])) };
 }
 
 // Lead über seine id finden, frisch aus der Tabelle, weil Meta und das Sortier-Skript Zeilen verschieben.
@@ -299,11 +300,15 @@ function claude(system, text, schema) {
   return JSON.parse(block.text);
 }
 
-// WhatsApp-Nachricht für „Nicht erreicht“, gilt fürs ganze Team. {Name} und {Wunsch} setzt die App ein und müssen bleiben.
+// Texte an Kunden (Setup), gelten fürs ganze Team. Die App setzt {Name}, {Wunsch}, {Nr}, {Ich} ein.
+// Leer = Standardtext der App. Bei „Nicht erreicht“ müssen {Name} und {Wunsch} bleiben.
+const TEXTE = ['WA_VORLAGE', 'TEXT_ANGEBOT_WA', 'TEXT_MAIL_BETREFF', 'TEXT_MAIL'];
 function vorlage(d) {
-  const t = String(d.vorlage || '').trim();
-  if (!t.includes('{Name}') || !t.includes('{Wunsch}') || t.length > 1000) throw fehler('vorlage', '{Name} und {Wunsch} müssen in der Nachricht bleiben, höchstens 1000 Zeichen.');
-  props().setProperty('WA_VORLAGE', t);
+  const k = d.art || 'WA_VORLAGE', t = String(d.text != null ? d.text : d.vorlage || '').trim();
+  if (!TEXTE.includes(k)) throw fehler('vorlage', 'Unbekannter Text.');
+  if (t.length > 2000) throw fehler('vorlage', 'Höchstens 2000 Zeichen.');
+  if (k === 'WA_VORLAGE' && t && (!t.includes('{Name}') || !t.includes('{Wunsch}'))) throw fehler('vorlage', '{Name} und {Wunsch} müssen in der Nachricht bleiben.');
+  if (t) props().setProperty(k, t); else props().deleteProperty(k);
   return {};
 }
 
@@ -683,9 +688,11 @@ function angebotMail(d) {
   if (!MAIL_OK.test(email)) throw fehler('email', 'Trag erst eine gültige E-Mail-Adresse ein.');
   const { t, zeile } = finde(d.id), vorname = (leseZeile(t, zeile).name || '').split(' ')[0];
   const pdf = lex('/v1/quotations/' + a.link.split('/').pop() + '/file', null, 'get', true).setName('Angebot ' + a.nr + '.pdf');
+  // Betreff und Text kommen fertig aus der App (Setup → Mail: Angebot), sonst der Standard
   MailApp.sendEmail({
-    to: email, name: 'JD Brüder', subject: 'Dein Angebot ' + a.nr + ' von JD Brüder', attachments: [pdf],
-    body: 'Hallo' + (vorname ? ' ' + vorname : '') + ',\n\nim Anhang findest du dein Angebot ' + a.nr + '.\n\nMeld dich gern, wenn du Fragen hast.\n\nViele Grüße\n'
+    to: email, name: 'JD Brüder', attachments: [pdf],
+    subject: String(d.betreff || '').trim().slice(0, 200) || 'Dein Angebot ' + a.nr + ' von JD Brüder',
+    body: String(d.text || '').trim().slice(0, 5000) || 'Hallo' + (vorname ? ' ' + vorname : '') + ',\n\nim Anhang findest du dein Angebot ' + a.nr + '.\n\nMeld dich gern, wenn du Fragen hast.\n\nViele Grüße\n'
       + (String(d.wer || '').trim() || 'Dein Team') + '\nJD Brüder',
   });
   return gesendet(Object.assign({}, d, { weg: 'Mail', an: email }));

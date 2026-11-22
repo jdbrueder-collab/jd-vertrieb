@@ -23,7 +23,7 @@ Alles im Google-Konto, dem die Lead-Tabellen gehören.
    - `LEXWARE_API_KEY` = Schlüssel aus Lexware Office (*Einstellungen → Öffentliche API*, gibt es ab Tarif XL), optional
 4. **Als Web-App bereitstellen:** Oben rechts *Bereitstellen → Neue Bereitstellung*. Beim Zahnrad *Typ auswählen* → **Web-App**. *Ausführen als:* **Ich**, *Zugriff:* **Jeder**. Auf *Bereitstellen*, Zugriff erlauben (Google fragt nach Tabellen und externen Verbindungen). Die **Web-App-URL** kopieren (endet auf `/exec`).
 5. **URL eintragen:** Die URL in `config.js` bei `window.JD_API` eintragen und hochladen (oder einfach an Claude schicken). Die URL ist kein Geheimnis, ohne Passwort liefert sie nichts.
-6. **App öffnen:** Link der App auf dem Handy öffnen, Name und Team-Passwort eingeben, dann *Setup → Auf den Startbildschirm*.
+6. **App öffnen:** Link der App auf dem Handy öffnen, Name und Team-Passwort eingeben, dann *Setup → App → Auf den Startbildschirm*.
 
 **Test:** Die Web-App-URL im Browser öffnen. Steht dort „JD Vertrieb Schnittstelle läuft.“, ist alles bereit.
 
@@ -33,7 +33,7 @@ Danach im Apps Script oben die Funktion **vertriebEinrichten** wählen und **Aus
 
 - Jede Minute schaut das Skript, ob sich eine Lead-Tabelle geändert hat, und meldet neue Leads aufs Handy. Ein Tipp auf die Nachricht öffnet den Lead.
 - Morgens gegen 8 Uhr kommt eine Nachricht mit allen Leads, bei denen heute ein Rückruf oder Termin fällig ist.
-- Einschalten pro Handy: App auf den Startbildschirm, dann *Setup → Benachrichtigungen*. Auf dem iPhone geht das nur in der installierten App (ab iOS 16.4).
+- Einschalten pro Handy: App auf den Startbildschirm, dann *Setup → App → Benachrichtigungen*. Auf dem iPhone geht das nur in der installierten App (ab iOS 16.4).
 - Versendet wird über einen kleinen, kostenlosen Dienst bei Cloudflare (`push/worker.js`, wie bei Dayliner). Er merkt sich nichts, das Skript schickt die Geräte mit. Neu hochladen: im Ordner `push` `npx wrangler deploy`. Geheimnisse dort: `VAPID_PRIVATE` (aus `push/.vapid-private`) und `GEHEIMNIS` (aus `push/.geheimnis`, dasselbe wie `PUSH_GEHEIMNIS` im Skript). Beide Dateien liegen nur lokal.
 
 ## Fotos
@@ -42,7 +42,9 @@ Beim Lead unter *Fotos* lassen sich Bilder in voller Auflösung hochladen, eins 
 
 ## WhatsApp bei „Nicht erreicht“
 
-Wer beim Lead den Status auf *Nicht erreicht* setzt, bekommt die Frage „Per WhatsApp schreiben?“. Ein Tipp öffnet WhatsApp mit fertigem Text, im Verlauf landet ein Vermerk. Den Text stellt man unter *Setup → WhatsApp bei „Nicht erreicht“* ein, er gilt fürs ganze Team (Skripteigenschaft `WA_VORLAGE`). Platzhalter: `{Name}` (Vorname des Kunden) und `{Wunsch}` (Interesse) müssen drinbleiben, `{Ich}` ist der Name dessen, der schreibt.
+Wer beim Lead den Status auf *Nicht erreicht* setzt, bekommt die Frage „Per WhatsApp schreiben?“. Ein Tipp öffnet WhatsApp mit fertigem Text, im Verlauf landet ein Vermerk. Den Text stellt man unter *Setup → WhatsApp: Nicht erreicht* ein. Platzhalter: `{Name}` (Vorname des Kunden) und `{Wunsch}` (Interesse) müssen drinbleiben, `{Ich}` ist der Name dessen, der schreibt.
+
+**Texte an Kunden:** Unter *Setup → Nachrichten an Kunden* hat jeder Text sein eigenes Fenster mit Live-Vorschau, so wie er in WhatsApp oder im Postfach ankommt: *WhatsApp: Nicht erreicht* (`WA_VORLAGE`), *WhatsApp: Angebot* (Text zum PDF, `TEXT_ANGEBOT_WA`) und *Mail: Angebot* (Betreff und Text, `TEXT_MAIL_BETREFF`, `TEXT_MAIL`). Bausteine: `{Name}`, `{Wunsch}`, `{Nr}` (Angebotsnummer), `{Ich}`. Die Texte gelten fürs ganze Team und liegen als Skripteigenschaften im Google-Skript. Fehlt eine, gilt der Standardtext der App.
 
 ## Lexware
 
@@ -55,7 +57,7 @@ Ist `LEXWARE_API_KEY` hinterlegt (Skripteigenschaft im Google-Skript), passiert 
 - **Verschicken:** Unter *Letztes Angebot* gibt *WhatsApp* die PDF-Datei selbst (kein Link) über das Teilen-Menü des iPhones weiter: dort WhatsApp Business und den Kunden wählen. Die App lädt das PDF dafür beim Öffnen des Kunden vor, weil iOS Teilen nur direkt beim Tippen erlaubt. Taucht der Kunde im Teilen-Menü nicht auf, erst über den WhatsApp-Knopf unten den Chat öffnen. *Mail* schickt das Angebot nach einer Rückfrage direkt aus dem Gmail-Konto, unter dem das Google-Skript läuft (jd.brueder@gmail.com), mit dem PDF im Anhang (dafür muss die E-Mail eingetragen sein; Gmail erlaubt rund 100 Empfänger am Tag). Im Verlauf landet jeweils ein Vermerk. Das letzte Angebot merkt sich das Skript in `ANGEBOT_<Lead-id>`.
 - **Nachfassen:** Ist beim Verschicken noch kein Rückruf geplant (und der Lead nicht terminiert, beauftragt oder unqualifiziert), trägt das Skript den Termin in 3 Tagen ein. An dem Tag steht der Lead unter *Fällig* mit „Angebot … nachfassen“, und die 8-Uhr-Nachricht nennt ihn.
 - **Artikel im Angebot:** Unter *Setup → Lexware → Artikel im Angebot* legt ihr fest, welche Lexware-Artikel in der App erscheinen (z. B. ohne Bauleistungen). Gilt fürs ganze Team (`ARTIKEL_AUS`), neue Artikel sind erst mal sichtbar.
-- Pakete und Preise pflegt ihr in Lexware unter *Artikel*. *Setup → Lexware → Prüfen* zeigt, ob der Schlüssel funktioniert.
+- Pakete und Preise pflegt ihr in Lexware unter *Artikel*. *Setup → Lexware → Verbindung* zeigt, ob der Schlüssel funktioniert.
 
 ## WhatsApp von der JD-Brüder-Nummer
 
@@ -69,9 +71,9 @@ Unter *Setup → Design* wählt jeder für sein Handy Dunkel oder Hell und ob da
 
 **Beim neuen Meta-Sofortformular** bei den Kontaktinformationen neben Name und Telefonnummer auch **E-Mail** anhaken (ist aus dem Facebook-Profil vorausgefüllt). Die App übernimmt die E-Mail dann automatisch in die Kundendaten und nach Lexware. Laufende Formulare lässt Meta nicht ändern, deshalb erst beim nächsten Formular.
 
-Link zur neuen Lead-Tabelle in „JD Vertrieb“ in die nächste freie Zeile in Spalte A setzen. Beim nächsten Aktualisieren sind die Leads in der App. In der App führt *Setup → Tabelle verbinden* direkt dorthin. Alte Tabellen dürfen drinbleiben, dann tauchen offene Rückrufe weiter auf. Wer sie nicht mehr braucht, löscht die Zeile.
+Link zur neuen Lead-Tabelle in „JD Vertrieb“ in die nächste freie Zeile in Spalte A setzen. Beim nächsten Aktualisieren sind die Leads in der App. In der App führt *Setup → Lead-Tabellen → Tabelle verbinden* direkt dorthin. Alte Tabellen dürfen drinbleiben, dann tauchen offene Rückrufe weiter auf. Wer sie nicht mehr braucht, löscht die Zeile.
 
-Kann eine Tabelle nicht gelesen werden (falscher Link, kein Zugriff), zeigt die App das unter *Setup* an, die anderen Tabellen laufen weiter.
+Kann eine Tabelle nicht gelesen werden (falscher Link, kein Zugriff), zeigt die App das unter *Setup → Lead-Tabellen* an, die anderen Tabellen laufen weiter.
 
 ## Was die App in die Lead-Tabellen schreibt
 

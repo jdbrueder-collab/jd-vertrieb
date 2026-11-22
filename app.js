@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '22';
+const VERSION = '23';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -30,9 +30,14 @@ let tab = 'anrufen', filter = 'Aktiv', suche = '';
 let offen = null;            // Lead, der gerade im Sheet offen ist
 const vorschlag = {};        // KI-Vorschläge je Lead
 const fotoCache = {}, fotoStand = {}, fotoRest = {};   // Fotos je Lead, laufender Upload, nicht hochgeladene Fotos
-// WhatsApp bei „Nicht erreicht“. Die Vorlage gilt fürs ganze Team und liegt im Google-Skript (Setup → WhatsApp-Nachricht).
-const VORLAGE_STANDARD = 'Hallo {Name}, hier ist {Ich} von JD Brüder. Ich habe gerade versucht, dich wegen deiner Anfrage zum Thema {Wunsch} anzurufen. Wann passt es dir am besten für einen kurzen Rückruf?';
-let vorlage = VORLAGE_STANDARD;
+// Texte an Kunden (Setup → Nachrichten an Kunden). Gelten fürs ganze Team und liegen im Google-Skript, sonst gilt der Standard.
+const TEXT_STANDARD = {
+  WA_VORLAGE: 'Hallo {Name}, hier ist {Ich} von JD Brüder. Ich habe gerade versucht, dich wegen deiner Anfrage zum Thema {Wunsch} anzurufen. Wann passt es dir am besten für einen kurzen Rückruf?',
+  TEXT_ANGEBOT_WA: 'Hallo {Name}, hier ist dein Angebot {Nr} von JD Brüder. Meld dich gern, wenn du Fragen hast.',
+  TEXT_MAIL_BETREFF: 'Dein Angebot {Nr} von JD Brüder',
+  TEXT_MAIL: 'Hallo {Name},\n\nim Anhang findest du dein Angebot {Nr}.\n\nMeld dich gern, wenn du Fragen hast.\n\nViele Grüße\n{Ich}\nJD Brüder',
+};
+let texte = { ...TEXT_STANDARD };
 // Lexware: Angebot und Kundendaten (nur sichtbar, wenn im Google-Skript ein Schlüssel hinterlegt ist)
 const LEX_APP = 'https://app.lexware.de/permalink/';
 let lexAn = false, lexArtikelCache = null, angebot = null;   // angebot: gerade offene Angebotsseite
@@ -53,7 +58,7 @@ async function api(aktion, daten = {}) {
   if (!j.ok) throw Object.assign(new Error(j.fehler || 'Fehler'), { code: j.code });
   return j;
 }
-function uebernimm(j) { leads = j.leads; tabellen = j.tabellen || []; heimUrl = j.heimUrl || ''; vorlage = j.vorlage || VORLAGE_STANDARD; lexAn = DEMO || !!j.lexware; stand = new Date(); }
+function uebernimm(j) { leads = j.leads; tabellen = j.tabellen || []; heimUrl = j.heimUrl || ''; texte = { ...TEXT_STANDARD, ...j.texte }; lexAn = DEMO || !!j.lexware; stand = new Date(); }
 async function laden(still) {
   if (!angemeldet() || laedt) return;
   laedt = true; $('.roundbtn')?.classList.add('spin');
@@ -81,6 +86,8 @@ function render() {
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   requestAnimationFrame(moveTabInd);
   ({ anrufen: renderAnrufen, alle: renderAlle, setup: renderSetup })[tab]();
+  const th = $('#thema');   // offenes Setup-Fenster mitziehen, außer man tippt gerade darin
+  if (th && !th.querySelector('input:focus')) th.outerHTML = themaHtml(th.dataset.id);
   if (DEMO) view.insertAdjacentHTML('afterbegin', '<div class="demo">Demo mit Beispiel-Leads. Noch nicht mit dem Sheet verbunden.</div>');
   const n = leads.filter(l => faellig(l) || l.status === 'Neu').length, b = $('[data-tab=anrufen]');
   b.querySelector('.badge')?.remove();
@@ -115,8 +122,10 @@ function relativ(iso) {
 // WhatsApp Business mit der JD-Brüder-Nummer, wa.me nimmt dort das private WhatsApp (getestet 21.11.2026).
 const waLink = (l, text) => `whatsapp://send?${l?.wa ? 'phone=' + l.wa.replace(/\D/g, '') + (text ? '&' : '') : ''}${text ? 'text=' + encodeURIComponent(text) : ''}`;
 const wunsch = l => (l.antworten.find(a => a[0] === 'Interesse') || l.antworten[0] || [])[1] || '';
-const waText = l => vorlage.replaceAll('{Name}', (l.name || '').split(' ')[0]).replaceAll('{Wunsch}', wunsch(l) || 'Fahrzeugaufbereitung')
-  .replaceAll('{Ich}', konto.name || 'das Team').replace(/ +,/g, ',');
+// Platzhalter in den Texten an Kunden: {Name} Vorname, {Wunsch} Formularantwort, {Nr} letztes Angebot, {Ich} wer die App nutzt
+const fuelle = (t, l) => t.replaceAll('{Name}', (l.name || '').split(' ')[0]).replaceAll('{Wunsch}', wunsch(l) || 'Fahrzeugaufbereitung')
+  .replaceAll('{Nr}', l.angebot?.nr || '').replaceAll('{Ich}', konto.name || 'das Team').replace(/ +,/g, ',');
+const waText = l => fuelle(texte.WA_VORLAGE, l);
 function leadZeile(l) {
   const info = faellig(l) && l.angebot?.gesendet ? `Angebot ${l.angebot.nr} nachfassen` : wunsch(l) || l.telefon;
   return `<div class="lead">
@@ -168,40 +177,114 @@ function renderAlle() {
 }
 
 // ---------- Tab: Setup ----------
+// Aufbau wie in der Stempeluhr: Themenliste, jedes Thema öffnet ein eigenes Fenster
+const NACHRICHTEN = {
+  WA_VORLAGE: { titel: 'WhatsApp: Nicht erreicht', kurz: 'Nicht erreicht', icon: '💬', sub: 'Wenn du jemanden nicht erreichst', felder: ['{Name}', '{Wunsch}', '{Ich}'] },
+  TEXT_ANGEBOT_WA: { titel: 'WhatsApp: Angebot', kurz: 'Angebot', icon: '📄', sub: 'Text zum PDF im Chat', felder: ['{Name}', '{Nr}', '{Ich}'], pdf: true },
+  TEXT_MAIL: { titel: 'Mail: Angebot', kurz: 'Angebotsmail', icon: '✉️', sub: 'Betreff und Text, PDF im Anhang', felder: ['{Name}', '{Nr}', '{Ich}'], mail: true },
+};
+function setupThemen() {
+  const klemmt = tabellen.filter(t => t.fehler).length;
+  return [
+    [['du', '👤', 'Du', konto.name ? esc(konto.name) + ' · steht bei deinen Notizen' : 'Dein Name für die Notizen']],
+    [
+      ['tabellen', '📊', 'Lead-Tabellen', klemmt ? `<span style="color:var(--minus)">${klemmt === 1 ? 'Eine Tabelle klemmt' : klemmt + ' Tabellen klemmen'}</span>` : `${tabellen.length} verbunden · neue Kampagne verbinden`],
+      ['lexware', '🧾', 'Lexware', lexAn ? 'Artikel im Angebot, Kunden, Verbindung' : 'Nicht verbunden'],
+    ],
+    Object.entries(NACHRICHTEN).map(([k, n]) => [k, n.icon, n.titel, n.sub]),
+    [
+      ['design', '🎨', 'Design', 'Dunkel oder hell, Gold im Hintergrund'],
+      ['app', '📲', 'App', 'Startbildschirm, Benachrichtigungen · Version ' + VERSION],
+    ],
+  ];
+}
 function renderSetup() {
   view.innerHTML = `<div class="phead"><h1>Setup</h1></div>
-    <div class="label">Du</div>
-    <div class="group"><label class="row"><span>Dein Name</span><input value="${esc(konto.name)}" placeholder="z. B. David" onchange="konto.name=this.value.trim();merke('jdv-konto',konto);toast('Gespeichert')" autocomplete="given-name"></label></div>
-    <p class="hint">Steht bei jeder Notiz dabei, damit ihr wisst, wer telefoniert hat.</p>
-    <div class="label">Lead-Tabellen</div>
-    <div class="group">
+    ${setupThemen().map((g, i) => `${i === 2 ? '<div class="label">Nachrichten an Kunden</div>' : ''}<div class="group">${g.map(([id, icon, titel, sub]) => `<button class="row thema" onclick="thema('${id}')">
+      <span class="ti">${icon}</span><span class="tt"><b>${titel}</b><span class="muted small">${sub}</span></span><span>›</span></button>`).join('')}</div>`).join('')}`;
+}
+function thema(id) {
+  if (NACHRICHTEN[id]) return textFenster(id);
+  sheet(themaHtml(id));
+}
+function themaHtml(id) {
+  const titel = { du: 'Du', tabellen: 'Lead-Tabellen', lexware: 'Lexware', design: 'Design', app: 'App' }[id];
+  const inhalt = {
+    du: () => `<div class="group"><label class="row"><span>Dein Name</span><input value="${esc(konto.name)}" placeholder="z. B. David" onchange="konto.name=this.value.trim();merke('jdv-konto',konto);toast('Gespeichert');this.blur();render()" autocomplete="given-name"></label></div>
+      <p class="hint">Steht bei jeder Notiz dabei, damit ihr wisst, wer telefoniert hat. In den Nachrichten an Kunden wird daraus {Ich}.</p>
+      ${DEMO ? '' : '<button class="pill wide" style="color:var(--minus);margin-top:var(--gap-l)" onclick="abmelden()">Abmelden</button>'}`,
+    tabellen: () => `<div class="group">
       ${tabellen.map(t => t.fehler ? `<div class="row"><span>⚠️ ${esc(t.name)}</span><span style="color:var(--minus)">klemmt</span></div>`
         : t.url ? `<a class="row" href="${esc(t.url)}" target="_blank" rel="noopener"><span>📊 ${esc(t.name)}</span><span>${t.anzahl} ›</span></a>`
         : `<div class="row"><span>📊 ${esc(t.name)}</span><span>${t.anzahl}</span></div>`).join('')}
       ${heimUrl ? `<a class="row" href="${esc(heimUrl)}" target="_blank" rel="noopener"><span>➕ Tabelle verbinden</span><span>›</span></a>` : ''}
     </div>
     ${tabellen.filter(t => t.fehler).map(t => `<p class="hint" style="color:var(--minus)">${esc(t.name)}: ${esc(t.fehler)}</p>`).join('')}
-    <p class="hint">Neue Kampagne? Tipp auf „Tabelle verbinden“ und setz den Link zur neuen Lead-Tabelle in die nächste freie Zeile in Spalte A.</p>
-    <div class="label">Design</div>
-    <div class="two">${[['dunkel', '🌙 Dunkel'], ['hell', '☀️ Hell']].map(([k, t]) => `<button class="pill ${lies('jdv-design', 'dunkel') === k ? 'sel' : ''}" aria-pressed="${lies('jdv-design', 'dunkel') === k}" onclick="designSetzen('design', '${k}')">${t}</button>`).join('')}</div>
-    <div class="group"><label class="row"><span>✨ Gold im Hintergrund</span><input type="checkbox" switch ${lies('jdv-gold', true) ? 'checked' : ''} onchange="designSetzen('gold', this.checked)"></label></div>
-    <div class="label">WhatsApp bei „Nicht erreicht“</div>
-    <textarea id="vorlage" aria-label="WhatsApp-Nachricht" onchange="vorlageSpeichern(this)">${esc(vorlage)}</textarea>
-    <p class="hint">{Name} wird zum Vornamen des Kunden, {Wunsch} zu dem, was er will, {Ich} zu deinem Namen. {Name} und {Wunsch} müssen drinbleiben. Gilt fürs ganze Team.</p>
-    <p class="hint">Vorschau: ${esc(waText({ name: 'Kevin', antworten: [['Interesse', 'Referenzauto']] }))}</p>
-    <div class="label">Lexware</div>
-    <div class="group">${lexAn ? `<button class="row" onclick="lexPruefen()"><span>🧾 Verbindung</span><span>Prüfen ›</span></button>
-      <button class="row" onclick="artikelWahl()"><span>Artikel im Angebot</span><span>Auswählen ›</span></button>
-      ${ohneKunde().length ? `<button class="row" onclick="nachziehen(this)"><span>Offene Leads ohne Kunde</span><span>${ohneKunde().length} anlegen ›</span></button>` : ''}`
-      : '<div class="row"><span>🧾 Lexware</span><span class="muted">Nicht verbunden</span></div>'}</div>
-    <div class="label">App</div>
-    <div class="group">
+    <p class="hint">Neue Kampagne? Tipp auf „Tabelle verbinden“ und setz den Link zur neuen Lead-Tabelle in die nächste freie Zeile in Spalte A.</p>`,
+    lexware: () => lexAn ? `<div class="group"><button class="row" onclick="artikelWahl()"><span>Artikel im Angebot</span><span>Auswählen ›</span></button>
+      ${ohneKunde().length ? `<button class="row" onclick="nachziehen(this)"><span>Offene Leads ohne Kunde</span><span>${ohneKunde().length} anlegen ›</span></button>` : ''}
+      <button class="row" onclick="lexPruefen()"><span>Verbindung</span><span>Prüfen ›</span></button></div>
+      <p class="hint">Neue Leads werden automatisch Kunden in Lexware. Die Auswahl der Artikel gilt fürs ganze Team.</p>`
+      : '<div class="group"><div class="row"><span>🧾 Lexware</span><span>Nicht verbunden</span></div></div><p class="hint">Der Schlüssel gehört ins Google-Skript (LEXWARE_API_KEY), siehe README.</p>',
+    design: () => `<div class="two">${[['dunkel', '🌙 Dunkel'], ['hell', '☀️ Hell']].map(([k, t]) => `<button class="pill ${lies('jdv-design', 'dunkel') === k ? 'sel' : ''}" aria-pressed="${lies('jdv-design', 'dunkel') === k}" onclick="designSetzen('design', '${k}')">${t}</button>`).join('')}</div>
+      <div class="group"><label class="row"><span>✨ Gold im Hintergrund</span><input type="checkbox" switch ${lies('jdv-gold', true) ? 'checked' : ''} onchange="designSetzen('gold', this.checked)"></label></div>
+      <p class="hint">Gilt nur für dieses Handy.</p>`,
+    app: () => `<div class="group">
       <button class="row" onclick="installHilfe()"><span>📲 Auf den Startbildschirm</span><span>›</span></button>
       ${pushOk() ? `<button class="row" onclick="pushEin()"><span>🔔 Benachrichtigungen</span><span>${Notification.permission === 'granted' ? 'An' : 'Einschalten ›'}</span></button>`
-        : '<div class="row"><span>🔔 Benachrichtigungen</span><span class="muted">Erst auf den Startbildschirm</span></div>'}
+        : '<div class="row"><span>🔔 Benachrichtigungen</span><span>Erst auf den Startbildschirm</span></div>'}
       <div class="row"><span>Version</span><span>${VERSION}</span></div>
-    </div>
-    ${DEMO ? '' : '<button class="pill wide" style="color:var(--minus);margin-top:var(--gap-l)" onclick="abmelden()">Abmelden</button>'}`;
+    </div>`,
+  }[id];
+  return `<div id="thema" data-id="${id}"><div class="sheet-head"><span></span><h2>${titel}</h2><button class="pill" onclick="closeSheet()">Fertig</button></div>${inhalt()}</div>`;
+}
+
+// Setup → Nachrichten an Kunden: Text bearbeiten, darüber live, wie es beim Kunden ankommt (Beispielkunde Kevin)
+const BEISPIEL = { name: 'Kevin Becker', antworten: [['Interesse', 'Referenzauto']], angebot: { nr: 'AG0052' } };
+let textFeld = null;   // Betreff oder Text, je nachdem wo zuletzt getippt wurde: dort landen die Bausteine
+function textFenster(k) {
+  const n = NACHRICHTEN[k];
+  sheet(`<div class="sheet-head"><button class="pill" onclick="closeSheet()">Abbrechen</button><h2>${n.kurz}</h2><button class="pill sel" onclick="textSpeichern('${k}', this)">Sichern</button></div>
+    <div class="label">So sieht Kevin es ${n.mail ? 'im Postfach' : 'in WhatsApp'}</div>
+    <div id="tvorschau"></div>
+    ${n.mail ? `<div class="label">Betreff</div><input class="full" id="tbetreff" value="${esc(texte.TEXT_MAIL_BETREFF)}" oninput="textVorschau('${k}')" onfocus="textFeld=this" aria-label="Betreff">` : ''}
+    <div class="label">Text</div>
+    <textarea id="ttext" rows="${n.mail ? 11 : 6}" oninput="textVorschau('${k}')" onfocus="textFeld=this" aria-label="Text">${esc(texte[k])}</textarea>
+    <div class="seg">${n.felder.map(f => `<button class="pill sm" onmousedown="event.preventDefault()" onclick="baustein('${f}', '${k}')">${f}</button>`).join('')}</div>
+    <p class="hint">Tipp auf einen Baustein, dann steht er im Text. {Name} wird zum Vornamen, ${n.felder.includes('{Wunsch}') ? '{Wunsch} zu dem, was der Kunde will' : '{Nr} zur Angebotsnummer'}, {Ich} zu deinem Namen.${k === 'WA_VORLAGE' ? ' {Name} und {Wunsch} müssen drinbleiben.' : ''}${n.mail ? '' : ' *fett* und _schräg_ zeigt WhatsApp fett und schräg.'} Gilt fürs ganze Team.</p>
+    <button class="pill wide" onclick="textStandard('${k}')">Standardtext einsetzen</button>`);
+  textFeld = $('#ttext'); textVorschau(k);
+}
+const waFormat = t => esc(t).replace(/\*([^*\n]+)\*/g, '<b>$1</b>').replace(/_([^_\n]+)_/g, '<i>$1</i>').replace(/~([^~\n]+)~/g, '<s>$1</s>');
+function textVorschau(k) {
+  const n = NACHRICHTEN[k], text = fuelle($('#ttext').value.trim(), BEISPIEL), d = new Date(), pdf = `Angebot ${BEISPIEL.angebot.nr}.pdf`;
+  $('#tvorschau').innerHTML = n.mail
+    ? `<div class="mailvorschau"><p><span>Von</span>JD Brüder &lt;jd.brueder@gmail.com&gt;</p><p><span>An</span>kevin@beispiel.de</p>
+      <div class="betreff">${esc(fuelle($('#tbetreff').value.trim(), BEISPIEL)) || '<i>Kein Betreff</i>'}</div>
+      <div class="mailtext">${esc(text)}</div><span class="anhang">📄 ${pdf}</span></div>`
+    : `<div class="wachat"><div class="wakopf"><span class="ava">K</span><b>Kevin Becker</b></div>
+      <div class="blase">${n.pdf ? `<div class="wadok"><span class="pdf">PDF</span><span><b>${pdf}</b><small>1 Seite · PDF</small></span></div>` : ''}<span class="watext">${waFormat(text)}</span><span class="zeit">${pad(d.getHours())}:${pad(d.getMinutes())} <span class="haken">✓✓</span></span></div></div>`;
+}
+function baustein(f, k) {
+  const t = textFeld || $('#ttext');
+  t.setRangeText(f, t.selectionStart, t.selectionEnd, 'end'); t.focus(); textVorschau(k);
+}
+function textStandard(k) {
+  $('#ttext').value = TEXT_STANDARD[k];
+  if ($('#tbetreff')) $('#tbetreff').value = TEXT_STANDARD.TEXT_MAIL_BETREFF;
+  textVorschau(k); toast('Standardtext steht drin. Sichern nicht vergessen.');
+}
+async function textSpeichern(k, knopf) {
+  const neu = { [k]: $('#ttext').value.trim() };
+  if ($('#tbetreff')) neu.TEXT_MAIL_BETREFF = $('#tbetreff').value.trim();
+  if (Object.values(neu).some(t => !t)) return toast('Leer geht nicht. Für den Standard tipp auf „Standardtext einsetzen“.');
+  if (k === 'WA_VORLAGE' && (!neu[k].includes('{Name}') || !neu[k].includes('{Wunsch}'))) return toast('{Name} und {Wunsch} müssen in der Nachricht bleiben.');
+  knopf.disabled = true;
+  try {
+    // Gleich wie der Standard: leer speichern, dann gilt auch ein später verbesserter Standard
+    await Promise.all(Object.entries(neu).map(([art, t]) => api('vorlage', { art, text: t === TEXT_STANDARD[art] ? '' : t })));
+    Object.assign(texte, neu); closeSheet(); toast('Gespeichert, gilt jetzt fürs ganze Team');
+  } catch (e) { toast(e.message); knopf.disabled = false; }
 }
 
 // Dunkel/Hell und Gold im Hintergrund, gilt nur für dieses Handy. Beim Start setzt index.html das schon vor dem ersten Bild.
@@ -353,12 +436,6 @@ function waGeschickt(id) {
   api('speichern', { id, notiz: 'Nicht erreicht, per WhatsApp angeschrieben' })
     .then(j => { Object.assign(leads.find(x => x.id === id) || {}, j.lead); leadNeu(id); }).catch(e => toast(e.message));
 }
-async function vorlageSpeichern(t) {
-  const neu = t.value.trim();
-  if (!neu.includes('{Name}') || !neu.includes('{Wunsch}')) { t.value = vorlage; return toast('{Name} und {Wunsch} müssen in der Nachricht bleiben.'); }
-  try { await api('vorlage', { vorlage: neu }); vorlage = neu; toast('WhatsApp-Nachricht gespeichert'); render(); }
-  catch (e) { t.value = vorlage; toast(e.message); }
-}
 function uebernehmen(id) {
   const v = vorschlag[id]; delete vorschlag[id];
   setze(id, v.naechster ? { status: v.status, naechster: v.naechster } : { status: v.status });
@@ -447,7 +524,6 @@ async function fotosHoch(id, dateien) {
 // ---------- Lexware: Angebot und Kundendaten ----------
 const euro = n => (Number(n) || 0).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
 const MAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const anrede = l => { const v = (l.name || '').split(' ')[0]; return `Hallo${v ? ' ' + v : ''}`; };
 // Im Kundenfenster oben: Angebot erstellen, letztes Angebot verschicken, E-Mail und Adresse (gehen direkt nach Lexware)
 function kundeBlock(l) {
   const id = js(l.id), a = l.angebot, k = kundeCache[l.id] || l.kunde || {};
@@ -499,7 +575,7 @@ async function angebotWhatsApp(id) {
   if (!a) return;
   if (!p || p.nr !== a.nr) { toast('Das PDF lädt noch. Tipp gleich nochmal.'); return pdfLaden(id); }
   if (!navigator.canShare?.({ files: [p.datei] })) return toast('Dieses Gerät kann keine Dateien teilen. Nimm das iPhone.');
-  try { await navigator.share({ files: [p.datei], text: `${anrede(l)}, hier ist dein Angebot ${a.nr} von JD Brüder. Meld dich gern, wenn du Fragen hast.` }); }
+  try { await navigator.share({ files: [p.datei], text: fuelle(texte.TEXT_ANGEBOT_WA, l) }); }
   catch (e) { return e.name === 'AbortError' ? null : toast('Teilen hat nicht geklappt.'); }
   angebotGeschickt(id, 'WhatsApp');
 }
@@ -518,7 +594,7 @@ async function angebotMail(id, knopf) {
   if (!confirm(`Angebot ${a.nr} jetzt per Mail an ${email} senden? Das PDF hängt an.`)) return;
   knopf.disabled = true; knopf.textContent = 'Sendet…';
   try {
-    const j = await api('angebotMail', { id, email });
+    const j = await api('angebotMail', { id, email, betreff: fuelle(texte.TEXT_MAIL_BETREFF, l), text: fuelle(texte.TEXT_MAIL, l) });
     Object.assign(l, j.lead, { angebot: j.angebot });
     toast(`Angebot ${a.nr} an ${email} gesendet.${j.nachfassen ? ` Nachfassen am ${datumKurz(j.nachfassen)} steht drin.` : ''}`);
   } catch (e) { toast(e.message); }

@@ -83,7 +83,7 @@ function welt(props) {
         return { getSheets: () => [blatt([['Nur ein Hinweis']]), lead], getName: () => 'Leads November 2026', getUrl: () => 'https://a' }; // ohne Zeitzone, wie die echte Tabelle
       },
     },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] ?? null, setProperty: (k, v) => { props[k] = v; }, setProperties: (o) => Object.assign(props, o), getProperties: () => ({ ...props }) }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] ?? null, setProperty: (k, v) => { props[k] = v; }, setProperties: (o) => Object.assign(props, o), deleteProperty: (k) => { delete props[k]; }, getProperties: () => ({ ...props }) }) },
     DriveApp: {
       Access: { ANYONE_WITH_LINK: 'jeder' }, Permission: { VIEW: 'ansehen' },
       getFileById: () => ({ getLastUpdated: () => new Date(drive.geaendert) }),
@@ -181,11 +181,18 @@ assert.match(zeileAnna[9], /\n\n20\.11\.26 14:03 KI: • Will Komplettpaket\n/);
 assert.strictEqual(JSON.stringify(r.vorschlag), '{"status":"Zurückrufen","naechster":"2026-11-27"}');
 
 // WhatsApp-Vorlage: Platzhalter {Name} und {Wunsch} müssen bleiben, danach kommt sie mit der Liste
-assert.strictEqual(w.post({ aktion: 'liste', pw }).vorlage, '');
+assert.strictEqual(JSON.stringify(w.post({ aktion: 'liste', pw }).texte), '{}');
 assert.strictEqual(w.post({ aktion: 'vorlage', pw, vorlage: 'Hallo, ruf zurück' }).code, 'vorlage');
 assert.strictEqual(w.post({ aktion: 'vorlage', pw, vorlage: 'Hallo {Name}, ruf zurück' }).code, 'vorlage');
 assert.ok(w.post({ aktion: 'vorlage', pw, vorlage: ' Hallo {Name}, wegen {Wunsch}: ruf zurück! ' }).ok);
-assert.strictEqual(w.post({ aktion: 'liste', pw }).vorlage, 'Hallo {Name}, wegen {Wunsch}: ruf zurück!');
+assert.strictEqual(w.post({ aktion: 'liste', pw }).texte.WA_VORLAGE, 'Hallo {Name}, wegen {Wunsch}: ruf zurück!');
+// Weitere Texte (Angebot per WhatsApp und Mail): ohne Pflichtfelder, leer = zurück zum Standard, nur bekannte Schlüssel
+assert.ok(w.post({ aktion: 'vorlage', pw, art: 'TEXT_MAIL_BETREFF', text: 'Angebot {Nr}' }).ok);
+assert.strictEqual(w.post({ aktion: 'liste', pw }).texte.TEXT_MAIL_BETREFF, 'Angebot {Nr}');
+assert.ok(w.post({ aktion: 'vorlage', pw, art: 'TEXT_MAIL_BETREFF', text: '  ' }).ok);
+assert.strictEqual(w.props.TEXT_MAIL_BETREFF, undefined);
+assert.strictEqual(w.post({ aktion: 'vorlage', pw, art: 'LEXWARE_API_KEY', text: 'x' }).code, 'vorlage');
+assert.strictEqual(w.post({ aktion: 'vorlage', pw, art: 'WA_VORLAGE', text: 'ohne Platzhalter' }).code, 'vorlage');
 
 // Feedback
 assert.strictEqual(w.post({ aktion: 'feedback', pw, text: ' ' }).code, 'leer');
@@ -373,6 +380,9 @@ assert.strictEqual(JSON.stringify([m.to, m.name, m.subject]), '["anna@example.de
 assert.strictEqual(m.attachments[0].name, 'Angebot AG0049.pdf');
 assert.match(m.body, /^Hallo Anna,\n\nim Anhang findest du dein Angebot AG0049\.[\s\S]*Viele Grüße\nDavid\nJD Brüder$/);
 assert.match(r.lead.notizen, /David: Angebot AG0049 per Mail an anna@example\.de geschickt$/);
+// Mit eigenem Text aus dem Setup: die App schickt Betreff und Text fertig mit
+assert.ok(w.post({ aktion: 'angebotMail', pw, wer: 'David', id: anna, email: 'anna@example.de', betreff: 'Hier dein Angebot', text: 'Hallo Anna,\nanbei.' }).ok);
+assert.strictEqual(JSON.stringify([w.mails.at(-1).subject, w.mails.pop().body]), '["Hier dein Angebot","Hallo Anna,\\nanbei."]');
 
 // Morgens fällig: Angebote zum Nachfassen erkennbar
 w.lead.find((z) => z[6] === 'Anna Alt')[10] = new Date('2026-01-02T12:00:00Z');
