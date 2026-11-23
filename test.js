@@ -53,6 +53,11 @@ function welt(props) {
     else if (pfad === '/v1/contacts' && o.method === 'post') { lexware.kontakt = Object.assign({}, body, { id: 'K-1', version: 1 }); j = { id: 'K-1', version: 1 }; }
     else if (pfad === '/v1/contacts/K-1' && o.method === 'get') j = JSON.parse(JSON.stringify(lexware.kontakt));
     else if (pfad === '/v1/contacts/K-1' && o.method === 'put') { lexware.kontakt = Object.assign(body, { version: body.version + 1 }); j = { id: 'K-1' }; }
+    else if (pfad.startsWith('/v1/contacts/')) {   // schon vorhandene Kunden
+      const c = lexware.vorhanden.find((x) => x.id === pfad.split('/').pop());
+      if (c && o.method === 'put') Object.assign(c, body);
+      j = c ? JSON.parse(JSON.stringify(c)) : null;
+    }
     else if (pfad === '/v1/quotations?finalize=true') j = { id: 'Q-1', version: 1 };
     else if (pfad === '/v1/quotations/Q-1') j = Object.assign({ id: 'Q-1', version: 1, voucherNumber: 'AG0049', voucherStatus: 'open', totalPrice: { totalGrossAmount: 409.56 } }, lexware.angebot);   // angebot: in Lexware bearbeitet
     else if (pfad === '/v1/quotations/Q-1/file') return { getResponseCode: () => 200, getBlob: () => ({ bytes: '%PDF', getBytes: () => [37, 80, 68, 70], setName(n) { this.name = n; return this; } }) };
@@ -301,7 +306,7 @@ assert.ok(r.ok, r.fehler);
 assert.strictEqual(w.lexware.anfragen.map((x) => x.methode).join(), 'get,put,get,put');
 assert.strictEqual(JSON.stringify(w.lexware.kontakt.addresses.billing[0]), '{"street":"Bahnhofstr. 1","zip":"56305","city":"Puderbach","countryCode":"DE"}');   // leere Felder ändern nichts
 assert.strictEqual(w.lexware.kontakt.emailAddresses.private[0], 'anna@example.de');
-assert.strictEqual(w.lexware.kontakt.version, 2);   // mit der frisch gelesenen Version geschrieben
+assert.strictEqual(w.lexware.kontakt.version, 3);   // mit der frisch gelesenen Version geschrieben
 
 // Angebot: nichts gewählt geht nicht, unbekannter Artikel wird gemeldet
 assert.strictEqual(w.post({ aktion: 'lexAngebot', pw, id: anna, posten: [{ name: 'X', menge: 0, preis: 5 }] }).code, 'leer');
@@ -410,11 +415,18 @@ assert.strictEqual(w.props.ARTIKEL_AUS, '["A2"]');
 assert.strictEqual(JSON.stringify(w.post({ aktion: 'lexArtikel', pw }).artikel.map((a) => [a.id, a.aus])), '[["A4",false],["A1",false],["A2",true]]');
 
 // Dubletten: gleicher Nachname UND gleiche Nummer wird verknüpft, nur gleicher Name nicht
-w.lexware.vorhanden.push({ id: 'K-ALT', person: { lastName: 'Frisch' }, phoneNumbers: { mobile: ['0171 3333333'] } });
+w.lexware.vorhanden.push({ id: 'K-ALT', version: 4, person: { lastName: 'Frisch' }, phoneNumbers: { mobile: ['0171 3333333'] } });
+// Kundendaten bei einem Lead, den es in Lexware schon gibt: verknüpfen UND Mail und Adresse dort eintragen
+r = w.post({ aktion: 'lexDaten', pw, id: A + '~l:3', speichern: true, email: 'cora@example.de', strasse: 'Weg 2', plz: '56305', ort: 'Puderbach' });
+assert.ok(r.ok, r.fehler);
+assert.strictEqual(r.lex, 'K-ALT');
+const coraK = w.lexware.vorhanden.find((c) => c.id === 'K-ALT');
+assert.strictEqual(coraK.emailAddresses.private[0], 'cora@example.de');
+assert.strictEqual(coraK.addresses.billing[0].street, 'Weg 2');
 w.lexware.anfragen.length = 0;
 r = w.post({ aktion: 'nachziehen', pw });
 assert.ok(r.ok, r.fehler);
-assert.strictEqual(JSON.stringify([r.angelegt, r.rest]), '[5,0]');      // Dora, Cora, Ben, Eva, Von Hand
+assert.strictEqual(JSON.stringify([r.angelegt, r.rest]), '[4,0]');      // Dora, Ben, Eva, Von Hand (Cora ist schon verknüpft)
 assert.strictEqual(w.props['LEX_' + A + '~l:3'], 'K-ALT');               // Cora Frisch gab es schon (gleiche Nummer)
 assert.strictEqual(w.lexware.anfragen.filter((x) => x.pfad === '/v1/contacts').length, 4);   // Cora nicht neu
 assert.strictEqual(JSON.stringify(w.post({ aktion: 'nachziehen', pw })), '{"ok":true,"angelegt":0,"rest":0}');

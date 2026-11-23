@@ -579,14 +579,16 @@ function lexAdresseSicher(id) {
 
 // Kundendaten lesen (ohne speichern) oder in Lexware speichern. Gibt es den Kunden noch nicht, wird er angelegt.
 function lexDaten(d) {
-  const id = props().getProperty('LEX_' + d.id);
+  let id = props().getProperty('LEX_' + d.id);
   if (!d.speichern) {
     if (id) return { lex: id, kunde: lexKundeAus(lex('/v1/contacts/' + id)) };
     const { t, zeile } = finde(d.id);
     return { lex: '', kunde: leseZeile(t, zeile).kunde };
   }
   const k = kundeAus(d);
-  if (!id) { const { t, zeile } = finde(d.id); return { lex: lexKontakt(d.id, leseZeile(t, zeile), k), kunde: k }; }
+  // Noch kein Kunde: anlegen oder einen schon vorhandenen verknüpfen. Danach immer die Daten eintragen,
+  // sonst fehlen sie beim verknüpften Kunden.
+  if (!id) { const { t, zeile } = finde(d.id); id = lexKontakt(d.id, leseZeile(t, zeile), k); }
   for (let versuch = 0; ; versuch++) {
     const c = lexKontaktDaten(lex('/v1/contacts/' + id), k);
     try { lex('/v1/contacts/' + id, c, 'put'); return { lex: id, kunde: lexKundeAus(c) }; }

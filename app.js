@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '28';
+const VERSION = '29';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -42,7 +42,7 @@ let texte = { ...TEXT_STANDARD }, skriptAlt = false;   // skriptAlt: Google-Skri
 const LEX_APP = 'https://app.lexware.de/permalink/';
 let lexAn = false, lexArtikelCache = null, angebot = null;   // angebot: gerade offene Angebotsseite
 // E-Mail und Adresse je Lead (aus Lexware oder gerade eingetippt), Speichern mit kurzer Pause; PDF des letzten Angebots fertig zum Teilen
-const kundeCache = {}, kundeUhr = {}, pdfCache = {};
+const kundeCache = {}, kundeUhr = {}, kundeStand = {}, pdfCache = {};   // kundeStand: zuletzt aus Lexware geladen oder dorthin gespeichert
 const waFrage = {};          // Leads, bei denen gerade die Frage „Jetzt per WhatsApp schreiben?“ steht
 let ziel = decodeURIComponent((location.hash.match(/^#lead=(.+)$/) || [])[1] || '');   // Tipp auf eine Benachrichtigung
 if (ziel) history.replaceState(null, '', location.pathname + location.search);
@@ -349,7 +349,7 @@ function leadNeu(id) {
   const l = leads.find(x => x.id === id), p = $('.panel');
   if (offen !== id || !l || !p) return;
   const txt = $('#notiz')?.value || '', top = p.scrollTop;
-  if ($('#kunde')) kundeCache[id] = kundeFelder();
+  kundeSichern(id, 'still');   // beim Neuzeichnen feuert kein change mehr, also vorher sichern
   p.innerHTML = '<div class="grab"></div>' + leadHtml(l);
   $('#notiz').value = txt; p.scrollTop = top;
 }
@@ -528,7 +528,7 @@ const MAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Im Kundenfenster oben: Angebot erstellen, letztes Angebot verschicken, E-Mail und Adresse (gehen direkt nach Lexware)
 function kundeBlock(l) {
   const id = js(l.id), a = l.angebot, k = kundeCache[l.id] || l.kunde || {};
-  const feld = (f, name, extra = '') => `<div class="row"><label for="k-${f}">${name}</label><input id="k-${f}" value="${esc(k[f] || '')}" autocomplete="off" onchange="kundeGeaendert(${id})"${extra}></div>`;
+  const feld = (f, name, extra = '') => `<div class="row"><label for="k-${f}">${name}</label><input id="k-${f}" value="${esc(k[f] || '')}" autocomplete="off" onchange="kundeSichern(${id}, 'warten')"${extra}></div>`;
   // Neues Angebot: Knopf „Angebot“ in der festen Leiste unten, auch mitten im Telefonat ohne Scrollen
   return `${a ? `<div class="label">Letztes Angebot</div>${angebotKarte(l)}` : ''}
     <div class="label">Kundendaten</div>
@@ -550,22 +550,27 @@ async function kundeLaden(id) {
   try {
     const j = await api('lexDaten', { id }), l = leads.find(x => x.id === id);
     if (l && j.lex) l.lex = j.lex;
-    kundeCache[id] ||= j.kunde;
+    kundeCache[id] ||= j.kunde; kundeStand[id] ??= JSON.stringify(j.kunde);
     if (offen === id) for (const [f, v] of Object.entries(j.kunde)) { const el = $('#k-' + f); if (el && !el.value && document.activeElement !== el) el.value = v; }
   } catch (e) { if (offen === id) toast(e.message); }
 }
-// Feld verlassen: kurz warten (vielleicht kommt gleich das nächste Feld), dann alles auf einmal nach Lexware
-function kundeGeaendert(id) {
-  const k = kundeCache[id] = kundeFelder();
+// Kundendaten nach Lexware, sobald sie sich geändert haben: kurz nach dem Verlassen eines Feldes ('warten'), sonst sofort.
+// Sofort auch, bevor das Fenster zugeht oder neu gezeichnet wird: Verschwindet ein Feld beim Tippen, feuert iOS kein change mehr.
+function kundeSichern(id, wie) {
+  if (!$('#kunde')) return;
+  const k = kundeCache[id] = kundeFelder(), stand = JSON.stringify(k);
   clearTimeout(kundeUhr[id]);
-  if (k.email && !MAIL_OK.test(k.email)) return toast('Die E-Mail-Adresse sieht nicht richtig aus.');
-  kundeUhr[id] = setTimeout(async () => {
+  if (stand === kundeStand[id] || !Object.values(k).some(Boolean)) return;
+  if (k.email && !MAIL_OK.test(k.email)) return wie === 'still' ? null : toast('Die E-Mail-Adresse sieht nicht richtig aus.');
+  const los = async () => {
+    kundeStand[id] = stand;
     try {
       const j = await api('lexDaten', { id, speichern: true, ...k }), l = leads.find(x => x.id === id);
       if (l) l.lex = j.lex;
       toast('In Lexware gespeichert');
-    } catch (e) { toast(e.message); }
-  }, 800);
+    } catch (e) { delete kundeStand[id]; toast('Kundendaten nicht gespeichert: ' + e.message); }   // beim nächsten Mal nochmal
+  };
+  if (wie === 'warten') kundeUhr[id] = setTimeout(los, 800); else los();
 }
 // Verschickt: Vermerk im Verlauf, und ohne geplanten Rückruf trägt das Skript Nachfassen in 3 Tagen ein
 // PDF des letzten Angebots holen und als Datei bereithalten. Teilen muss direkt beim Tippen passieren,
@@ -657,7 +662,7 @@ const angebotSumme = a => [...(a.artikel || []).filter(x => a.menge[x.id]).map(x
 async function angebotOeffnen(id) {
   const notiz = $('#notiz')?.value.trim();   // angefangene Notiz bleibt als Entwurf am Lead
   if (notiz) merke('jdv-entwurf', { ...lies('jdv-entwurf', {}), [id]: notiz });
-  if ($('#kunde')) kundeCache[id] = kundeFelder();
+  kundeSichern(id);
   const l = leads.find(x => x.id === id), ref = /referenz/i.test(wunsch(l));   // Aktion: 20 % für Referenzkunden
   offen = null;
   const a = angebot = { id, artikel: lexArtikelCache, menge: {}, eigene: [], rabatt: ref ? 20 : 0, referenz: ref, suche: '' };
@@ -763,6 +768,7 @@ function sheet(html) {
 }
 function closeSheet() {
   const id = offen, notiz = $('#notiz')?.value.trim();
+  if (id) kundeSichern(id);
   $('#sheet').hidden = true; $('#sheet').innerHTML = ''; offen = null; angebot = null;
   if (id && notiz) notizSenden(id, notiz);
 }
