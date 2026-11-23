@@ -40,7 +40,7 @@ const werte = [
 ];
 
 const sp = ctx.spalten_(werte[0]);
-assert.deepEqual({ ...sp }, { status: 17, notiz: 18, datum: 2, breite: 18 });
+assert.deepEqual({ ...sp }, { status: 17, notiz: 18, datum: 2, kalender: 0, breite: 18 });
 
 const { werte: out, geaendert } = ctx.bereinigeLeads_(werte);
 assert.equal(geaendert, true);
@@ -81,5 +81,19 @@ const out2 = ctx.bereinigeLeads_(werte2).werte;
 assert.equal(out2[1][18], termin);
 assert.equal(out2[1][17], 'kommt Montag');
 assert.ok(out2[2].slice(16).every(v => v === ''));
+
+// Reiter „Website-Anfragen“ (von JD Vertrieb angelegt): Termin in K, nichts rechts davon
+const WEB_KOPF = ['id', 'created_time', 'platform', 'interesse', 'fahrzeug', 'full_name', 'phone_number', 'email', 'lead_status', 'Notiz', 'Termin'];
+const spWeb = ctx.spalten_(WEB_KOPF);
+assert.deepEqual({ ...spWeb }, { status: 9, notiz: 10, datum: 2, kalender: 11, breite: 11 });
+const webTermin = new Date(Date.UTC(2026, 10, 26));
+const werte3 = [WEB_KOPF,
+  ['web-1', 47000.5, 'Website', 'aufbereitung', 'VW Golf 8', 'Eva Web', '0171 6666666', 'eva@example.de', 'Zurückrufen', '23.11.26 David: ruft zurück', webTermin],
+  ['web-2', 47000.6, 'Website', 'folie', 'BMW 3er', 'Max Web', '0171 7777777', 'max@example.de', '', '', '']];
+const out3 = ctx.bereinigeLeads_(werte3.map(z => z.slice()));
+assert.equal(out3.geaendert, false);                 // ordentliche Website-Zeilen bleiben, wie sie sind
+assert.equal(out3.werte[1][10], webTermin);          // Termin in K bleibt
+assert.equal(out3.werte[1][8], 'Zurückrufen');
+assert.equal(out3.werte[2][7], 'max@example.de');    // E-Mail ist kein Meta-Müll, weil sie in der Kopfzeile steht
 
 console.log('Alle Tests grün');

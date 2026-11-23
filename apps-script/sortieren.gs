@@ -3,17 +3,19 @@
 // Header immer in Zeile 1, neueste Leads oben, Dropdown in lead_status,
 // Zeilenfarbe nach Status über die ganze Zeile bis zur letzten Header-Spalte,
 // Kalender zur Datumsauswahl in Spalte S (Termin).
+// Seit 23.11.2026 genauso für den Reiter „Website-Anfragen“ (legt JD Vertrieb bei der ersten
+// Anfrage über das Formular auf jd-brueder.de an, Termin steht dort in Spalte K).
 //
 // Einrichtung: Code einfügen, speichern, einmal "einrichten" ausführen.
 // Danach sortiert das Skript alle 10 Minuten, Farben setzen sich sofort bei Statusänderung.
 
-const SHEET_NAME = "Tabellenblatt1";
+const SHEET_NAMEN = ["Tabellenblatt1", "Website-Anfragen"]; // Meta-Leads, Anfragen der Website
 const STATUS_NAME = "lead_status";
 const NOTIZ_NAMEN = ["Notiz", "Notizen"];
 const DATUM_NAME = "created_time";
 const STATUS_WERTE = ["Neu", "Offen", "Zurückrufen", "Terminiert", "Nicht erreicht", "Unqualifiziert", "Auftrag"]; // Neu = weiß, zum Zurücksetzen
-const KALENDER_SPALTE = 19;        // S: Doppelklick öffnet den Kalender
-const KALENDER_NAME = "Termin";    // wird nur gesetzt, wenn S1 leer ist
+const KALENDER_NAME = "Termin";    // Spalte mit dieser Überschrift bekommt den Kalender (Doppelklick)
+const KALENDER_SPALTE = 19;        // S: falls es noch keine Spalte „Termin“ gibt, kommt sie hierhin (nur wenn S1 leer)
 
 // Was Meta beim Eintragen als Müll hinterlässt (zusätzlich zu den eigenen Header-Namen)
 const META_MUELL = ["CREATED", "id", "created_time", "ad_id", "ad_name", "adset_id",
@@ -55,7 +57,7 @@ const ERSTE_ZEITEN = {
 };
 
 function repariereErsteZeiten_() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMEN[0]);
   const lastRow = sheet.getLastRow();
   const sp = spalten_(sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]);
   if (lastRow < 2 || !sp.datum) return;
@@ -101,6 +103,7 @@ function spalten_(header) {
     status: namen.indexOf(STATUS_NAME) + 1,
     notiz: namen.findIndex(h => NOTIZ_NAMEN.includes(h)) + 1,
     datum: namen.indexOf(DATUM_NAME) + 1,
+    kalender: namen.indexOf(KALENDER_NAME) + 1,
     breite: breite,
   };
 }
@@ -124,7 +127,7 @@ function bereinigeLeads_(werte) {
     if (sp.status && !erlaubt.has(normalisiereStatus_(zeile[sp.status - 1]))) setze(sp.status - 1, "");
 
     // Kalenderspalte: Meta-Müll raus, Datumswerte bleiben
-    const k = KALENDER_SPALTE - 1;
+    const k = (sp.kalender || KALENDER_SPALTE) - 1;
     if (typeof zeile[k] === "string" && muell.has(zeile[k].trim())) setze(k, "");
 
     const extra = [];
@@ -167,7 +170,7 @@ function faerbeZeilen_(sheet, startRow, anzahl, sp) {
 function onEdit(e) {
   if (!e) return;
   const sheet = e.range.getSheet();
-  if (sheet.getName() !== SHEET_NAME || e.range.getRow() < 2) return;
+  if (!SHEET_NAMEN.includes(sheet.getName()) || e.range.getRow() < 2) return;
 
   const sp = spalten_(sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]);
   if (!sp.status) return; // Header steht gerade nicht oben, der nächste Sortierlauf richtet das
@@ -178,8 +181,14 @@ function onEdit(e) {
 
 // ===== HEADER FIX + AUFRÄUMEN + SORTIEREN + DROPDOWN + FARBEN =====
 function autoSortLeads() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
-  if (!sheet) return;
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  SHEET_NAMEN.forEach(name => {
+    const sheet = ss.getSheetByName(name);
+    if (sheet) sortiereBlatt_(sheet);   // Reiter „Website-Anfragen“ gibt es erst nach der ersten Anfrage
+  });
+}
+
+function sortiereBlatt_(sheet) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return;
 
@@ -192,9 +201,13 @@ function autoSortLeads() {
   }
   if (headerRow > 1) sheet.moveRows(sheet.getRange(headerRow + ":" + headerRow), 1);
 
-  // Überschrift für die Kalenderspalte, damit S zur Tabelle gehört und nicht als Meta-Müll gilt
-  const kopfKalender = sheet.getRange(1, KALENDER_SPALTE);
-  if (!String(kopfKalender.getValue()).trim()) kopfKalender.setValue(KALENDER_NAME);
+  // Überschrift für die Kalenderspalte, damit S zur Tabelle gehört und nicht als Meta-Müll gilt.
+  // Hat der Reiter schon eine Spalte „Termin“ (Website-Anfragen: K), bleibt alles, wie es ist.
+  const kopf = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  if (!kopf.some(h => String(h).trim() === KALENDER_NAME)) {
+    const kopfKalender = sheet.getRange(1, KALENDER_SPALTE);
+    if (!String(kopfKalender.getValue()).trim()) kopfKalender.setValue(KALENDER_NAME);
+  }
   const lastCol = sheet.getLastColumn();
 
   // Meta-Reste aufräumen, nur schreiben wenn sich etwas geändert hat
@@ -223,8 +236,8 @@ function autoSortLeads() {
     .build();
   sheet.getRange(2, sp.status, lastRow - 1, 1).setDataValidation(regel);
 
-  // Kalender in Spalte S: Datumsprüfung sorgt für die Kalenderauswahl beim Doppelklick
-  sheet.getRange(2, KALENDER_SPALTE, lastRow - 1, 1)
+  // Kalender in der Spalte „Termin“: Datumsprüfung sorgt für die Kalenderauswahl beim Doppelklick
+  sheet.getRange(2, sp.kalender || KALENDER_SPALTE, lastRow - 1, 1)
     .setDataValidation(SpreadsheetApp.newDataValidation().requireDate().setAllowInvalid(false).build())
     .setNumberFormat("dd.MM.yyyy");
 
