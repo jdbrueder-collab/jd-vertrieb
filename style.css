@@ -10,7 +10,7 @@ html{height:100%;touch-action:pan-x pan-y}
 button,a,label,input,select,textarea,.tabs{touch-action:manipulation}
 body{position:relative;height:100%;background:var(--bg);color:var(--txt);font:17px/1.35 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;overflow-x:hidden}
 body::before{content:"";position:absolute;inset:0;z-index:-1;background:var(--bgimg),var(--bg)}
-main{position:absolute;inset:0;top:var(--oben);overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:16px max(var(--pad),calc(50% - 320px)) calc(env(safe-area-inset-bottom) + 96px)}
+main{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:calc(env(safe-area-inset-top) + 16px) max(var(--pad),calc(50% - 320px)) calc(env(safe-area-inset-bottom) + 96px)}
 button{font:inherit;color:inherit;border:0;background:none;cursor:pointer;padding:0}
 a{color:inherit;text-decoration:none}
 h1{font-size:30px;font-weight:600;margin:0}
@@ -175,7 +175,7 @@ body:has(#fbbtn:not([hidden])) .tabs{width:var(--tbw);left:calc(50% - 34px)}
 /* --- Bottom-Sheet statt Dialog --- */
 #sheet{position:absolute;inset:0;z-index:10}
 .backdrop{position:absolute;inset:0;background:rgba(0,0,0,.55)}
-.panel{position:absolute;left:0;right:0;bottom:0;max-height:calc(100% - var(--oben) - 12px);overflow:auto;overscroll-behavior:contain;border-radius:28px 28px 0 0;padding:var(--gap-s) var(--pad) calc(env(safe-area-inset-bottom) + 24px);max-width:640px;margin:0 auto;animation:up .25s ease-out;background:linear-gradient(180deg,rgba(40,33,24,.82),rgba(20,16,12,.92));-webkit-backdrop-filter:blur(24px) saturate(1.5);backdrop-filter:blur(24px) saturate(1.5);box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}
+.panel{position:absolute;left:0;right:0;bottom:0;max-height:calc(100% - env(safe-area-inset-top) - 12px);overflow:auto;overscroll-behavior:contain;border-radius:28px 28px 0 0;padding:var(--gap-s) var(--pad) calc(env(safe-area-inset-bottom) + 24px);max-width:640px;margin:0 auto;animation:up .25s ease-out;background:linear-gradient(180deg,rgba(40,33,24,.82),rgba(20,16,12,.92));-webkit-backdrop-filter:blur(24px) saturate(1.5);backdrop-filter:blur(24px) saturate(1.5);box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}
 .panel > :last-child{margin-bottom:0}
 @keyframes up{from{transform:translateY(40px);opacity:0}}
 .grab{width:44px;height:5px;border-radius:3px;background:rgba(255,255,255,.3);margin:0 auto var(--gap)}
@@ -207,7 +207,7 @@ html.hell .mailvorschau{background:#fff;color:#1c1c1e}html.hell .mailvorschau p{
 .sub{text-align:center;color:var(--mut);font-size:15px;margin:0 0 var(--gap)}
 
 /* --- Toast und Laden --- */
-.toast{position:absolute;left:50%;top:calc(var(--oben) + 10px);transform:translateX(-50%);z-index:20;max-width:calc(100% - 32px);padding:12px 18px;border-radius:20px;background:rgba(20,16,12,.85);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);box-shadow:inset 0 1px 0 rgba(255,255,255,.15),0 8px 24px rgba(0,0,0,.35);font-size:15px;animation:up .3s ease-out;transition:opacity .4s}
+.toast{position:absolute;left:50%;top:calc(env(safe-area-inset-top) + 10px);transform:translateX(-50%);z-index:20;max-width:calc(100% - 32px);padding:12px 18px;border-radius:20px;background:rgba(20,16,12,.85);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);box-shadow:inset 0 1px 0 rgba(255,255,255,.15),0 8px 24px rgba(0,0,0,.35);font-size:15px;animation:up .3s ease-out;transition:opacity .4s}
 .toast.out{opacity:0}
 .loading{text-align:center;color:var(--mut);padding:40px 0}
 
@@ -261,20 +261,18 @@ html.hell :is(.tab-hi,.statusmenu [aria-pressed=true]){color:#8a6a2c}
   body::after{content:"📱\A\A Bitte halte dein Handy hochkant.";white-space:pre;position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;text-align:center;font-size:20px;line-height:1.4;color:#f3efe6;background:#0d0b08}
 }
 
-/* iOS 26, installierte App vom Home-Bildschirm (zwei Fehler von iOS, nicht der App):
-   1. Oben legt iOS einen Glas-Schleier über die Statusleiste und rund 40 Punkte darunter. Abschalten lässt er sich nicht,
-      auch ein fester Streifen hilft auf echten iPhones nicht. Deshalb beginnt der Inhalt (Seite, Fenster, Meldungen) erst
-      unter dem Schleier, darüber liegt nur der Hintergrund (so auf einem iPhone bestätigt: github.com/thierryvm/TerminalLearning/pull/411).
-   2. Unten ist die Seite um die Höhe der Statusleiste zu kurz (WebKit-Fehler 301108), Menüleiste zu hoch, schwarzer Balken.
-      Ist das Dokument so hoch wie der Bildschirm, gibt iOS die volle Höhe frei (github.com/frappe/frappe-ui/pull/1284).
-   In Safari und auf anderen Geräten bleibt alles wie gehabt. */
-:root{--oben:env(safe-area-inset-top)}
+/* Oben wie bei einer echten iPhone-App: Der Inhalt läuft beim Scrollen unter Uhrzeit und Akku durch und wird nur dort
+   unscharf. Die Unschärfe ist genau so hoch wie die Statusleiste und läuft unten weich aus. In Safari und auf
+   Geräten ohne Statusleiste über der Seite ist sie 0 hoch. */
+.statusblur{position:fixed;top:0;left:0;right:0;height:env(safe-area-inset-top);z-index:4;pointer-events:none;
+  -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+  background:linear-gradient(color-mix(in srgb,var(--bg) 70%,transparent),color-mix(in srgb,var(--bg) 25%,transparent));
+  -webkit-mask-image:linear-gradient(#000 75%,transparent);mask-image:linear-gradient(#000 75%,transparent)}
+/* iOS 26, installierte App: Die Seite ist um die Höhe der Statusleiste zu kurz (WebKit-Fehler 301108), dann hängt die
+   Menüleiste zu hoch und unten bleibt ein schwarzer Balken. Ist das Dokument so hoch wie der Bildschirm, gibt iOS die
+   volle Höhe frei (github.com/frappe/frappe-ui/pull/1284). Auf dem iPhone bestätigt am 23.11.2026. */
 @media (display-mode:standalone){
   html{height:min(100lvh,calc(100% + env(safe-area-inset-top)))}
-  @supports (-webkit-touch-callout:none){
-    :root{--oben:calc(env(safe-area-inset-top) + 40px)}
-    main{padding-top:0}
-  }
 }
 
 /* Kleine Handys (iPhone SE 1. Generation, schmale Android): etwas enger und kleiner, damit nichts abgeschnitten wird */
