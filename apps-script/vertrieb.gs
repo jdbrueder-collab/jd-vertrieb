@@ -110,13 +110,17 @@ function zeit(x, anzeige, nurTag) {
   return nurTag ? s.slice(0, 10) : s;
 }
 
+function waAus(tel) {
+  let ziffern = String(tel || '').replace(/\D/g, '');
+  if (!String(tel || '').trim().startsWith('+')) ziffern = ziffern.replace(/^00/, '').replace(/^0/, '49');
+  return ziffern.length > 6 ? 'https://wa.me/' + ziffern : '';
+}
+
 function alsLead(t, z, a) {
   const roh = (name) => (t.sp(name) < 0 ? '' : z[t.sp(name)]);
   const zelle = (name) => [roh(name), t.sp(name) < 0 ? '' : a[t.sp(name)]];
   const text = (name) => { const v = String(roh(name)).trim(); return MUELL.has(v) ? '' : v; };
   const tel = text('phone_number').replace(/^p:/, '');
-  let ziffern = tel.replace(/\D/g, '');
-  if (!tel.startsWith('+')) ziffern = ziffern.replace(/^00/, '').replace(/^0/, '49');
   const eintraege = (t.notiz ? text(t.notiz) : '').split('\n\n').filter((e) => e.trim());
   const ki = eintraege.filter((e) => KI_EINTRAG.test(e)).pop() || '';
   const antworten = [];
@@ -131,7 +135,7 @@ function alsLead(t, z, a) {
     datum: zeit(...zelle('created_time')),
     name: text('full_name'),
     telefon: tel,
-    wa: ziffern.length > 6 ? 'https://wa.me/' + ziffern : '',
+    wa: waAus(tel),
     antworten,
     anzeige: text('ad_name'),
     quelle: { ig: 'Instagram', fb: 'Facebook' }[text('platform')] || text('platform'),
@@ -178,6 +182,9 @@ function liste() {
   const alle = props().getProperties();
   leads.forEach((l) => {   // Kontakt in Lexware und letztes Angebot, falls vorhanden
     l.lex = alle['LEX_' + l.id] || '';
+    const k = alle['KONTAKT_' + l.id] ? JSON.parse(alle['KONTAKT_' + l.id]) : {};   // Name und Telefon, wie sie in Lexware stehen
+    if (k.name) l.name = k.name;
+    if (k.telefon) Object.assign(l, { telefon: k.telefon, wa: waAus(k.telefon) });
     l.angebot = alle['ANGEBOT_' + l.id] ? JSON.parse(alle['ANGEBOT_' + l.id]) : null;
   });
   return { lexware: !!alle.LEXWARE_API_KEY, leads, tabellen, heimUrl: SpreadsheetApp.getActiveSpreadsheet().getUrl(),
@@ -620,11 +627,36 @@ function lexAdresseSicher(id) {
   lex('/v1/contacts/' + id, c, 'put');
 }
 
+// Was in Lexware geändert wurde, gilt auch in der App. Name (nur bei Personen) und Telefon merkt sich das Skript,
+// damit auch die Liste sie zeigt. Die Lead-Tabelle von Meta bleibt dabei unverändert.
+function lexKopf(appId, c) {
+  const p = c.person || {}, n = c.phoneNumbers || {};
+  const k = { name: c.person ? [p.firstName, p.lastName].filter(Boolean).join(' ').trim().replace(/^Ohne Namen$/, '') : '',
+    telefon: ['mobile', 'private', 'business', 'office', 'other'].map((x) => (n[x] || [])[0]).find(Boolean) || '' };
+  const key = 'KONTAKT_' + appId;
+  if ((k.name || k.telefon) && JSON.stringify(k) !== props().getProperty(key)) props().setProperty(key, JSON.stringify(k));
+  return Object.assign(k, { wa: waAus(k.telefon) });
+}
+// Neuestes Angebot des Kunden in Lexware, auch eins, das dort direkt angelegt oder kopiert wurde, mit Status.
+function lexNeuestesAngebot(appId, kontakt) {
+  const key = 'ANGEBOT_' + appId, a = JSON.parse(props().getProperty(key) || 'null');
+  const v = (lex('/v1/voucherlist?voucherType=quotation&voucherStatus=open,accepted,rejected&contactId=' + kontakt + '&size=1&sort=createdDate,DESC').content || [])[0];
+  if (!v) return a;
+  if (a && a.link.split('/').pop() === v.id) {
+    if (a.status !== v.voucherStatus) { a.status = v.voucherStatus; props().setProperty(key, JSON.stringify(a)); }
+    return a;
+  }
+  const neu = { nr: v.voucherNumber || '', summe: v.totalAmount || 0, pdf: '', link: LEX_APP + 'quotations/view/' + v.id,
+    datum: String(v.voucherDate || '').slice(0, 10), status: v.voucherStatus };   // PDF und Version holt angebotPdf
+  props().setProperty(key, JSON.stringify(neu));
+  return neu;
+}
+
 // Kundendaten lesen (ohne speichern) oder in Lexware speichern. Gibt es den Kunden noch nicht, wird er angelegt.
 function lexDaten(d) {
   let id = props().getProperty('LEX_' + d.id);
   if (!d.speichern) {
-    if (id) return { lex: id, kunde: lexKundeAus(lex('/v1/contacts/' + id)) };
+    if (id) { const c = lex('/v1/contacts/' + id); return Object.assign({ lex: id, kunde: lexKundeAus(c), angebot: lexNeuestesAngebot(d.id, id) }, lexKopf(d.id, c)); }
     const { t, zeile } = finde(d.id);
     return { lex: '', kunde: leseZeile(t, zeile).kunde };
   }
@@ -754,7 +786,7 @@ function angebotPdf(d) {
   const blob = lex('/v1/quotations/' + id + '/file', null, 'get', true).setName('Angebot ' + a.nr + '.pdf');
   if (q.version !== a.version) {
     if (a.version != null) a.geaendert = berlin(new Date(q.updatedDate || Date.now()), 'yyyy-MM-dd');
-    a.version = q.version;
+    a.version = q.version; a.status = q.voucherStatus;
     if ((q.totalPrice || {}).totalGrossAmount != null) a.summe = q.totalPrice.totalGrossAmount;
     try {
       const datei = fotoOrdner(d.id, true).createFile(blob), alt = (String(a.pdf).match(/\/d\/([\w-]+)/) || [])[1];

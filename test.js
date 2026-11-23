@@ -64,6 +64,7 @@ function welt(props) {
       if (c && o.method === 'put') Object.assign(c, body);
       j = c ? JSON.parse(JSON.stringify(c)) : null;
     }
+    else if (pfad.startsWith('/v1/voucherlist?')) j = { content: (lexware.angebote || []).filter((v) => pfad.includes('contactId=' + v.contactId)) };
     else if (pfad === '/v1/quotations?finalize=true') j = { id: 'Q-1', version: 1 };
     else if (pfad === '/v1/quotations/Q-1') j = Object.assign({ id: 'Q-1', version: 1, voucherNumber: 'AG0049', voucherStatus: 'open', totalPrice: { totalGrossAmount: 409.56 } }, lexware.angebot);   // angebot: in Lexware bearbeitet
     else if (pfad === '/v1/quotations/Q-1/file') return { getResponseCode: () => 200, getBlob: () => ({ bytes: '%PDF', getBytes: () => [37, 80, 68, 70], setName(n) { this.name = n; return this; } }) };
@@ -355,6 +356,23 @@ assert.strictEqual(w.post({ aktion: 'liste', pw }).leads.find((l) => l.id === an
 w.post({ aktion: 'angebotPdf', pw, id: anna });   // unverändert: keine weitere Kopie
 assert.strictEqual(w.drive.ordner.reduce((n, o) => n + o.dateien.length, 0), dateienVorher + 1);
 delete w.lexware.angebot;
+// Beim Öffnen gilt, was in Lexware steht: Name, Telefon, neuestes Angebot mit Status
+w.lexware.kontakt.person = { firstName: 'Anna', lastName: 'Alt-Neumann' };
+w.lexware.kontakt.phoneNumbers = { mobile: ['0171 9999999'] };
+w.lexware.angebote = [{ id: 'Q-1', contactId: 'K-1', voucherNumber: 'AG0049', voucherStatus: 'accepted', totalAmount: 499, voucherDate: '2026-11-20T00:00:00.000+01:00' }];
+let daten = w.post({ aktion: 'lexDaten', pw, id: anna });
+assert.strictEqual(daten.name, 'Anna Alt-Neumann'); assert.strictEqual(daten.telefon, '0171 9999999'); assert.strictEqual(daten.wa, 'https://wa.me/491719999999');
+assert.strictEqual(daten.angebot.nr, 'AG0049'); assert.strictEqual(daten.angebot.status, 'accepted'); assert.strictEqual(daten.angebot.gesendet, undefined);
+let annaListe = w.post({ aktion: 'liste', pw }).leads.find((l) => l.id === anna);
+assert.strictEqual(annaListe.name, 'Anna Alt-Neumann'); assert.strictEqual(annaListe.telefon, '0171 9999999'); assert.strictEqual(annaListe.angebot.status, 'accepted');
+// Neues Angebot direkt in Lexware angelegt: die App zeigt ab jetzt dieses
+w.lexware.angebote = [{ id: 'Q-9', contactId: 'K-1', voucherNumber: 'AG0060', voucherStatus: 'open', totalAmount: 120.5, voucherDate: '2026-11-23T00:00:00.000+01:00' }];
+daten = w.post({ aktion: 'lexDaten', pw, id: anna });
+assert.strictEqual(JSON.stringify(daten.angebot), '{"nr":"AG0060","summe":120.5,"pdf":"","link":"https://app.lexware.de/permalink/quotations/view/Q-9","datum":"2026-11-23","status":"open"}');
+assert.strictEqual(w.post({ aktion: 'liste', pw }).leads.find((l) => l.id === anna).angebot.nr, 'AG0060');
+// zurück auf Q-1 für die Tests danach
+w.lexware.angebote = [{ id: 'Q-1', contactId: 'K-1', voucherNumber: 'AG0049', voucherStatus: 'open', totalAmount: 409.56, voucherDate: '2026-11-20T00:00:00.000+01:00' }];
+w.post({ aktion: 'lexDaten', pw, id: anna });
 assert.strictEqual(w.post({ aktion: 'angebotPdf', pw, id: ben }).code, 'weg');
 assert.match(r.lead.notizen, /David: Angebot AG0049 erstellt \(409,56 €, 20 % Rabatt\): 2× Interieur Aufbereitung, Lederpflege$/);
 assert.strictEqual(w.post({ aktion: 'liste', pw }).leads.find((l) => l.id === anna).angebot.nr, 'AG0049');
@@ -415,7 +433,7 @@ assert.strictEqual(JSON.stringify([w.mails.at(-1).subject, w.mails.pop().body]),
 w.lead.find((z) => z[6] === 'Anna Alt')[10] = new Date('2026-01-02T12:00:00Z');
 w.props.PUSH_ABOS = JSON.stringify([abo]); w.drive.weg = []; w.pushes.length = 0;
 w.ctx.meldeFaellige();
-assert.match(w.pushes[0].body.body, /Anna Alt \(Angebot nachfassen\)/);
+assert.match(w.pushes[0].body.body, /Anna Alt-Neumann \(Angebot nachfassen\)/);
 
 // Artikel ausblenden (z. B. Bauleistungen), gilt fürs ganze Team
 assert.ok(w.post({ aktion: 'artikelAus', pw, aus: ['A2', 'bös<script>'] }).ok);

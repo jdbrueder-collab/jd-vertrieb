@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '29';
+const VERSION = '30';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -338,8 +338,11 @@ function openLead(id, fokus) {
   offen = id; angebot = null;
   sheet(leadHtml(l));
   if (!fotoCache[id]) fotosLaden(id);
-  if (lexAn && !kundeCache[id]) kundeLaden(id);
-  if (lexAn && l.angebot && !(Date.now() - pdfCache[id]?.zeit < 60000)) pdfLaden(id);   // jedes Mal frisch, außer gerade erst geholt
+  if (lexAn) {   // jedes Mal frisch aus Lexware, danach das PDF (es kann dort ein neues Angebot geben)
+    const frisch = Date.now() - pdfCache[id]?.zeit < 60000;   // gerade erst geholt, z. B. direkt nach dem Erstellen
+    if (l.angebot && !frisch) pdfCache[id] = { zeit: Date.now() };   // lädt gleich: die alte Fassung nicht mehr verschicken
+    kundeLaden(id).then(() => { const a = leads.find(x => x.id === id)?.angebot; if (a && (!frisch || pdfCache[id]?.nr !== a.nr)) pdfLaden(id); });
+  }
   const entwurf = lies('jdv-entwurf', {});
   if (entwurf[id]) { $('#notiz').value = entwurf[id]; delete entwurf[id]; merke('jdv-entwurf', entwurf); }
   if (fokus) setTimeout(() => $('#notiz')?.focus(), 300);
@@ -539,19 +542,36 @@ function kundeBlock(l) {
 function angebotKarte(l) {
   const id = js(l.id), a = l.angebot;
   return `<div class="card" id="angebotkarte">
-      <p class="angebotzeile"><span><b>${esc(a.nr || 'Angebot')}</b> · ${euro(a.summe)}</span><span class="muted">${a.geaendert ? 'geändert ' + datumKurz(a.geaendert) : a.datum ? 'vom ' + datumKurz(a.datum) : ''}</span></p>
+      <p class="angebotzeile"><span><b>${esc(a.nr || 'Angebot')}</b> · ${euro(a.summe)}</span><span class="muted">${{ accepted: 'angenommen', rejected: 'abgelehnt' }[a.status] || (a.geaendert ? 'geändert ' + datumKurz(a.geaendert) : a.datum ? 'vom ' + datumKurz(a.datum) : '')}</span></p>
       ${a.pdf ? `<div class="drei"><button class="pill" onclick="angebotWhatsApp(${id})">${ICON.wa}WhatsApp</button><button class="pill" onclick="angebotMail(${id}, this)">✉️ Mail</button><a class="pill" href="${esc(a.pdf)}" target="_blank" rel="noopener">📄 PDF</a></div>
       <p class="hint" style="margin:var(--gap) 0 0">WhatsApp: im Teilen-Menü WhatsApp Business und dann den Kunden wählen. Taucht er nicht auf, erst unten über WhatsApp den Chat öffnen.</p>`
         : `<a class="pill wide" style="margin:0" href="${esc(a.link)}" target="_blank" rel="noopener">Das PDF fehlt noch. In Lexware öffnen ↗</a>`}
     </div>`;
 }
 const kundeFelder = () => Object.fromEntries(['email', 'strasse', 'plz', 'ort'].map(f => [f, $('#k-' + f)?.value.trim() || '']));
+// Was in Lexware geändert wurde, gilt auch hier: Name, Telefon, Mail, Adresse und das neueste Angebot mit Status.
+// Felder, in denen gerade jemand tippt oder ungesicherte Änderungen stehen, bleiben, wie sie sind.
 async function kundeLaden(id) {
   try {
     const j = await api('lexDaten', { id }), l = leads.find(x => x.id === id);
-    if (l && j.lex) l.lex = j.lex;
-    kundeCache[id] ||= j.kunde; kundeStand[id] ??= JSON.stringify(j.kunde);
-    if (offen === id) for (const [f, v] of Object.entries(j.kunde)) { const el = $('#k-' + f); if (el && !el.value && document.activeElement !== el) el.value = v; }
+    if (!l) return;
+    if (j.lex) l.lex = j.lex;
+    const vorher = JSON.parse(kundeStand[id] || 'null') || kundeCache[id] || l.kunde || {};
+    if (offen === id) for (const [f, v] of Object.entries(j.kunde)) { const el = $('#k-' + f); if (el && document.activeElement !== el && el.value.trim() === (vorher[f] || '')) el.value = v; }
+    kundeStand[id] = JSON.stringify(j.kunde);
+    kundeCache[id] = offen === id && $('#kunde') ? kundeFelder() : j.kunde;
+    let neu = false;
+    if (j.name && j.name !== l.name) { l.name = j.name; neu = true; }
+    if (j.telefon && j.telefon !== l.telefon) { Object.assign(l, { telefon: j.telefon, wa: j.wa }); neu = true; }
+    if (j.angebot && j.angebot.link !== l.angebot?.link) {
+      l.angebot = j.angebot; neu = true;
+      if (offen === id) toast(`Angebot ${j.angebot.nr} aus Lexware übernommen`);
+    } else if (j.angebot && l.angebot && j.angebot.status !== l.angebot.status) {
+      l.angebot.status = j.angebot.status;
+      const karte = offen === id && $('#angebotkarte');
+      if (karte) karte.outerHTML = angebotKarte(l);
+    }
+    if (neu) { leadNeu(id); render(); }
   } catch (e) { if (offen === id) toast(e.message); }
 }
 // Kundendaten nach Lexware, sobald sie sich geändert haben: kurz nach dem Verlassen eines Feldes ('warten'), sonst sofort.
