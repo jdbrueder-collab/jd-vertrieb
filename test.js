@@ -4,7 +4,7 @@ const fs = require('fs'), vm = require('vm'), assert = require('assert');
 const A = 'TABELLE_A_123456789012345', KAPUTT = 'KAPUTT_12345678901234567';
 
 // Kleine Nachbildung einer Tabelle (Zeilen als Array, 1-basiert wie bei Google)
-function blatt(rows) {
+function blatt(rows, name = '') {
   const breite = () => Math.max(...rows.map((z) => z.length));
   const p2 = (n) => String(n).padStart(2, '0');
   // Anzeige wie in Sheets: Datum als dd.MM.yyyy HH:mm, Zahl mit Komma
@@ -16,12 +16,13 @@ function blatt(rows) {
     getDisplayValues: () => Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => zeige((rows[r - 1 + i] || [])[c - 1 + j] ?? ''))),
     setValue: (x) => { (rows[r - 1] ||= [])[c - 1] = x; },
     setNumberFormat() {},
+    setFontWeight() {},
     createTextFinder: (text) => ({
       matchEntireCell() { return this; },
       findNext: () => { for (let i = 0; i < nr; i++) if (String((rows[r - 1 + i] || [])[c - 1]) === text) return { getRow: () => r + i }; return null; },
     }),
   });
-  return { rows, getRange: range, getLastRow: () => rows.length, getDataRange: () => range(1, 1, rows.length, breite()), setFrozenRows() {},
+  return { rows, getName: () => name, getSheetId: () => 7, getRange: range, getLastRow: () => rows.length, getDataRange: () => range(1, 1, rows.length, breite()), setFrozenRows() {},
     appendRow: (z) => rows.push(z.map((x) => (typeof x === 'string' && x.startsWith("'") ? x.slice(1) : x))) }; // Apostroph = Text, wie in Sheets
 }
 
@@ -36,10 +37,16 @@ function welt(props) {
     ['', '', '', '', '', '', 'Von Hand', '0171 4444444', 'Offen', '', ''],
   ]);
   const heim = blatt([['Link'], ['https://docs.google.com/spreadsheets/d/' + A + '/edit?usp=sharing', ''], ['https://docs.google.com/spreadsheets/d/' + KAPUTT + '/edit', 'Alt']]);
-  // Tabelle, die das Anfrageformular der Website beim ersten Mal anlegt
-  const WEB = 'WEBSITE_ANFRAGEN_1234567890', web = blatt([]);
-  const webSS = { getSheets: () => [web], getName: () => 'Website-Anfragen', getId: () => WEB, getUrl: () => 'https://docs.google.com/spreadsheets/d/' + WEB + '/edit',
-    setSpreadsheetTimeZone() {}, setSpreadsheetLocale() {} };
+  // Die Tabelle, in der das Skript liegt: erster Reiter Meta-Leads (nicht verlinkt), dann die Links.
+  // Den Reiter „Website-Anfragen“ legt das Anfrageformular beim ersten Mal hinten an.
+  const HEIM = 'HEIM_TABELLE_123456789012', web = blatt([], 'Website-Anfragen');
+  const reiter = [blatt([['id', 'created_time'], ['l:77', '20.11.2026 10:00']], 'Tabellenblatt1'), heim];
+  const aktiv = {
+    getId: () => HEIM, getName: () => 'Leads Nov 2026', getUrl: () => 'https://heim', getSheets: () => reiter.slice(),
+    getSheetByName: (n) => (n === 'JD Vertrieb' ? heim : n === 'Website-Anfragen' ? reiter.find((r) => r === web) || null
+      : n === 'Feedback' && feedback.length ? { appendRow: (r) => feedback.push(r) } : null),
+    insertSheet: (n, i) => { if (n !== 'Website-Anfragen') return { appendRow: (r) => feedback.push(r) }; reiter.splice(i, 0, web); return web; },
+  };
   const feedback = [], cache = {}, pushes = [], mails = [], drive = { ordner: [], geaendert: 1, weg: [], papierkorb: [] };
   // Nachgebautes Lexware: merkt sich Anfragen, Antworten lassen sich vorgeben (z. B. 429)
   const lexware = { anfragen: [], naechste: [], vorhanden: [] };   // vorhanden: Kunden, die es in Lexware schon gibt
@@ -84,15 +91,9 @@ function welt(props) {
     console, JSON, Date, Object, String, Number, Array, Math, isNaN, Set,
     SpreadsheetApp: {
       flush() {},
-      getActiveSpreadsheet: () => ({
-        // Skript liegt in einer Lead-Tabelle: erster Reiter sind Leads, die Links stehen im zweiten
-        getSheets: () => [blatt([['id', 'created_time'], ['l:77', '20.11.2026 10:00']]), heim], getUrl: () => 'https://heim',
-        getSheetByName: (n) => (n === 'JD Vertrieb' ? heim : n === 'Feedback' && feedback.length ? { appendRow: (r) => feedback.push(r) } : null),
-        insertSheet: () => ({ appendRow: (r) => feedback.push(r) }),
-      }),
-      create: () => webSS,
+      getActiveSpreadsheet: () => aktiv,
       openById: (id) => {
-        if (id === WEB) return webSS;
+        if (id === HEIM) return aktiv;
         if (id !== A) throw new Error('Datei nicht gefunden');
         return { getSheets: () => [blatt([['Nur ein Hinweis']]), lead], getName: () => 'Leads November 2026', getUrl: () => 'https://a' }; // ohne Zeitzone, wie die echte Tabelle
       },
@@ -109,7 +110,7 @@ function welt(props) {
       getUuid: () => 'abcdef12-0000',
       newBlob: (bytes, typ, name) => ({ bytes, typ, name }),
       base64Decode: (t) => Array.from(Buffer.from(t, 'base64')), base64Encode: (b) => Buffer.from(b).toString('base64'),
-      formatDate: (d, tz, f) => f === 'dd.MM.yy HH:mm' ? '20.11.26 14:03' : f.endsWith('XXX') ? d.toISOString().slice(0, 23) + '+01:00' : f === 'yyyy-MM-dd' ? d.toISOString().slice(0, 10) : f.startsWith('yyyy') ? d.toISOString().slice(0, 19) : 'Freitag',
+      formatDate: (d, tz, f) => f === 'yyyy-MM-dd-HH-mm-ss' ? d.toISOString().slice(0, 19).replace(/[T:]/g, '-') : f === 'dd.MM.yy HH:mm' ? '20.11.26 14:03' : f.endsWith('XXX') ? d.toISOString().slice(0, 23) + '+01:00' : f === 'yyyy-MM-dd' ? d.toISOString().slice(0, 10) : f.startsWith('yyyy') ? d.toISOString().slice(0, 19) : 'Freitag',
       sleep: () => {},
     },
     MailApp: { sendEmail: (m) => mails.push(m), getRemainingDailyQuota: () => 100 },
@@ -464,20 +465,33 @@ w.cache.LEX_PROFIL = undefined;
 w.lexware.naechste.push({ code: 401, body: { message: 'Unauthorized' } });
 assert.match(w.post({ aktion: 'lexArtikel', pw }).fehler, /lehnt den Schlüssel ab/);
 
-// Anfrageformular der Website: ohne Passwort, legt beim ersten Mal die Tabelle an und trägt sie ein, dann ein Lead wie von Meta
+// Anfrageformular der Website: ohne Passwort, landet im Reiter „Website-Anfragen“ der eigenen Tabelle, dann ein Lead wie von Meta
 const eva = { aktion: 'anfrage', interesse: 'aufbereitung', fahrzeug: 'VW Golf 8', name: 'Eva Web', telefon: '0171 6666666', email: 'eva@example.de' };
 assert.strictEqual(w.post({ ...eva, email: 'kaputt' }).code, 'eingabe');
 assert.strictEqual(w.post({ ...eva, interesse: 'quatsch' }).code, 'eingabe');
 assert.ok(w.post({ ...eva, web: 'bot' }).ok);              // Bot-Falle: angenommen, aber nichts gespeichert
-assert.strictEqual(w.props.WEBSITE_TABELLE, undefined);
+assert.strictEqual(w.web.length, 0);
+assert.strictEqual(w.post({ aktion: 'liste', pw }).tabellen.length, 2); // ohne Anfragen kein Website-Reiter
+w.post({ aktion: 'push', pw, abo });
+w.ctx.meldeNeueLeads();
 r = w.post({ ...eva, name: '=HYPERLINK("x")' });
 assert.ok(r.ok, r.fehler);
 assert.strictEqual(w.web[0].join(), 'id,created_time,platform,interesse,fahrzeug,full_name,phone_number,email,lead_status,Notiz,Termin');
-assert.strictEqual(w.heim.at(-1)[1], 'Website-Anfragen');  // im Reiter „JD Vertrieb“ eingetragen
+assert.strictEqual(typeof w.web[1][1], 'number');          // Tabellen-Zahl in deutscher Zeit, wie im Sortier-Skript
+w.web[1][0] = 'web-erster01';                               // Nachbildung vergibt sonst zweimal dieselbe id
 assert.ok(w.post(eva).ok);
-assert.strictEqual(w.web.length, 3);                       // Tabelle nur einmal angelegt
+assert.strictEqual(w.web.length, 3);                       // Reiter nur einmal angelegt
+assert.strictEqual(w.heim.length, 3);                      // nichts im Reiter „JD Vertrieb“ eingetragen
 r = w.post({ aktion: 'liste', pw });
+const webTab = r.tabellen.find((t) => t.name === 'Website-Anfragen');
+assert.strictEqual(webTab.anzahl, 2);
+assert.strictEqual(webTab.url, 'https://heim#gid=7');
+assert.ok(r.leads.some((x) => x.tabelle === 'Leads November 2026')); // Meta-Leads weiter dabei
+assert.ok(!r.leads.some((x) => x.name === '' && x.telefon === '')); // Kopfzeile ist kein Lead
 const l = r.leads.find((x) => x.name === 'Eva Web');
+assert.match(l.id, /^HEIM_TABELLE_123456789012#web~web-/);
+assert.strictEqual(l.tabelle, 'Website-Anfragen');
+assert.strictEqual(l.datum.length, 19);
 assert.strictEqual(JSON.stringify(l.antworten), '[["Interesse","Aufbereitung"],["Fahrzeug","VW Golf 8"]]');
 assert.strictEqual(l.kunde.email, 'eva@example.de');
 assert.strictEqual(l.telefon, '0171 6666666');
@@ -485,6 +499,17 @@ assert.strictEqual(l.wa, 'https://wa.me/491716666666');
 assert.strictEqual(l.quelle, 'Website');
 assert.strictEqual(l.status, 'Neu');
 assert.ok(r.leads.some((x) => x.name === '=HYPERLINK("x")'));  // als Text gespeichert, nicht als Formel
+// Status, Termin und Notiz landen in der Zeile im Website-Reiter
+r = w.post({ aktion: 'speichern', pw, wer: 'David', id: l.id, status: 'Zurückrufen', naechster: '2026-11-26', notiz: 'Ruft morgen zurück' });
+assert.ok(r.ok, r.fehler);
+const zeileEva = w.web.find((z) => z[5] === 'Eva Web');
+assert.strictEqual(zeileEva[8], 'Zurückrufen');
+assert.ok(zeileEva[10] instanceof Date);
+assert.match(zeileEva[9], /David: Ruft morgen zurück$/);
+// Neue Website-Anfragen melden sich per Push wie Meta-Leads
+w.aendern();
+w.ctx.meldeNeueLeads();
+assert.ok(w.pushes.some((p) => /neue Leads|neuer Lead/i.test(p.body.title) && /Eva Web/.test(p.body.title + p.body.body)), JSON.stringify(w.pushes.at(-1).body));
 w.cache.anfragen = '30';
 assert.strictEqual(w.post(eva).code, 'viel');             // höchstens 30 Anfragen pro Stunde
 

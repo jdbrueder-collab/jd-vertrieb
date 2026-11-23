@@ -27,6 +27,7 @@ const MUELL = new Set(TECHNIK.concat(['CREATED', 'email'])); // was Meta beim Ei
 const KUNDENFELDER = { email: ['email', 'e-mail', 'e_mail'], strasse: ['street_address', 'straße', 'strasse', 'adresse'],
   plz: ['post_code', 'zip_code', 'zip', 'postleitzahl', 'plz'], ort: ['city', 'stadt', 'ort', 'wohnort'] };
 const MAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const WEB_REITER = 'Website-Anfragen', WEB = '#web'; // Reiter für das Anfrageformular der Website, id = Tabellen-id + WEB
 const KI_EINTRAG = /^\d\d\.\d\d\.\d\d \d\d:\d\d KI: /;
 const AKTIV = ['Neu', 'Offen', 'Nicht erreicht', 'Zurückrufen', 'Terminiert']; // wie in der App
 const APP_URL = 'https://jdbrueder-collab.github.io/jd-vertrieb/';
@@ -76,16 +77,22 @@ function verbunden() {
       if (m && !liste.some((v) => v.id === m[1])) liste.push({ id: m[1], name: String(z[1]), namensZelle: sh.getRange(i + 1, 2) });
     });
   });
+  // Dazu der Reiter mit den Anfragen der Website (siehe anfrage), wie eine eigene Lead-Tabelle
+  const heim = SpreadsheetApp.getActiveSpreadsheet();
+  if (heim.getSheetByName(WEB_REITER)) liste.push({ id: heim.getId() + WEB, name: WEB_REITER });
   return liste;
 }
 
 // Eine Lead-Tabelle lesen. Meta schiebt neue Leads über die Kopfzeile, bis das Sortier-Skript sie
 // wieder nach oben holt. Deshalb wird die Kopfzeile gesucht und jede andere Zeile ist ein Lead.
 // Gelesen wird der erste Reiter mit so einer Kopfzeile, andere Reiter (Links, Feedback) bleiben außen vor.
+// Eine id mit „#web“ am Ende meint nur den Reiter „Website-Anfragen“, sonst wird er übersprungen.
 function oeffne(id) {
-  const ss = SpreadsheetApp.openById(id);
+  const web = id.endsWith(WEB);
+  const ss = SpreadsheetApp.openById(web ? id.slice(0, -WEB.length) : id);
   let sheet, werte, k = -1;
   ss.getSheets().some((sh) => {
+    if ((sh.getName() === WEB_REITER) !== web) return false;
     sheet = sh;
     werte = sh.getDataRange().getValues();
     k = werte.findIndex((z) => z.includes('id') && z.includes('created_time'));
@@ -95,7 +102,7 @@ function oeffne(id) {
   const kopf = werte[k].map((h) => String(h).trim());
   const sp = (name) => kopf.indexOf(name);
   const anzeige = sheet.getDataRange().getDisplayValues(); // so wie in der Tabelle zu sehen, für Datumswerte
-  return { id, ss, sheet, kopf, sp, k, werte, anzeige, name: ss.getName(), notiz: kopf.find((h) => h === 'Notiz' || h === 'Notizen') };
+  return { id, ss, sheet, kopf, sp, k, werte, anzeige, name: web ? WEB_REITER : ss.getName(), notiz: kopf.find((h) => h === 'Notiz' || h === 'Notizen') };
 }
 
 // Zeitpunkt als Text in deutscher Uhrzeit ohne Zeitzone, z. B. 2026-11-20T21:49:00.
@@ -169,10 +176,10 @@ function liste() {
   verbunden().forEach((v) => {
     try {
       const t = oeffne(v.id);
-      if (v.name !== t.name) v.namensZelle.setValue(t.name);
+      if (v.namensZelle && v.name !== t.name) v.namensZelle.setValue(t.name);
       const ls = leadsAus(t);
       leads.push.apply(leads, ls);
-      tabellen.push({ name: t.name, url: t.ss.getUrl(), anzahl: ls.length });
+      tabellen.push({ name: t.name, url: t.ss.getUrl() + '#gid=' + t.sheet.getSheetId(), anzahl: ls.length });
     } catch (err) {
       tabellen.push({ name: v.name || 'Tabelle ' + v.id.slice(0, 6), fehler: err.code === 'kopf' ? err.message
         : 'Kein Zugriff (' + err.message + '). Stimmt der Link, und darf dieses Google-Konto die Tabelle bearbeiten?' });
@@ -320,9 +327,12 @@ function vorlage(d) {
 }
 
 // ---------- Anfrageformular der Website (jd-brueder) ----------
-// Gleiche Fragen wie das Meta-Formular, dazu die E-Mail. Jede Anfrage wird eine Zeile in der Tabelle
-// „Website-Anfragen“ und landet so wie Meta-Leads in der App (Push, Lexware-Kontakt, WhatsApp-Texte).
+// Gleiche Fragen wie das Meta-Formular, dazu die E-Mail. Jede Anfrage wird eine Zeile im Reiter
+// „Website-Anfragen“ dieser Tabelle (neben den Meta-Leads) und landet so wie Meta-Leads in der App
+// (Push, Lexware-Kontakt, WhatsApp-Texte). Das Sortier-Skript fasst nur „Tabellenblatt1“ an.
 const INTERESSEN = ['referenzauto', 'leasing', 'aufbereitung', 'folie', 'anderes']; // Schlüssel wie im Meta-Formular
+// Zeit als Tabellen-Zahl in deutscher Uhrzeit, egal welche Zeitzone die Tabelle hat (wie im Sortier-Skript)
+const tabellenZeit = (d) => { const t = berlin(d, 'yyyy-MM-dd-HH-mm-ss').split('-').map(Number); return Date.UTC(t[0], t[1] - 1, t[2], t[3], t[4], t[5]) / 864e5 + 25569; };
 function anfrage(d) {
   if (d.web) return {}; // verstecktes Feld, das nur Bots ausfüllen
   const f = (k, max) => String(d[k] || '').trim().slice(0, max);
@@ -336,7 +346,7 @@ function anfrage(d) {
   lock.waitLock(20000);
   try {
     // Apostroph = als Text speichern: keine Formeln, und die 0 vorn in der Telefonnummer bleibt.
-    websiteTabelle().appendRow(['web-' + Utilities.getUuid().slice(0, 8), new Date(), 'Website', a.interesse,
+    websiteTabelle().appendRow(['web-' + Utilities.getUuid().slice(0, 8), tabellenZeit(new Date()), 'Website', a.interesse,
       "'" + a.fahrzeug, "'" + a.name, "'" + a.telefon, "'" + a.email]);
   } finally {
     lock.releaseLock();
@@ -344,21 +354,17 @@ function anfrage(d) {
   return {};
 }
 
-// Beim ersten Mal legt das Skript die Tabelle an und trägt sie im Reiter „JD Vertrieb“ ein, damit die App sie liest.
+// Beim ersten Mal legt das Skript den Reiter hinten in dieser Tabelle an. verbunden() nimmt ihn von selbst mit.
 function websiteTabelle() {
-  const id = props().getProperty('WEBSITE_TABELLE');
-  if (id) return SpreadsheetApp.openById(id).getSheets()[0];
-  const ss = SpreadsheetApp.create('Website-Anfragen');
-  ss.setSpreadsheetTimeZone('Europe/Berlin');
-  ss.setSpreadsheetLocale('de_DE');
-  const sh = ss.getSheets()[0];
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sh = ss.getSheetByName(WEB_REITER);
+  if (sh) return sh;
+  sh = ss.insertSheet(WEB_REITER, ss.getSheets().length);
   sh.appendRow(['id', 'created_time', 'platform', 'interesse', 'fahrzeug', 'full_name', 'phone_number', 'email', 'lead_status', 'Notiz', 'Termin']);
   sh.setFrozenRows(1);
+  sh.getRange(1, 1, 1, 11).setFontWeight('bold');
   sh.getRange('B:B').setNumberFormat('dd.MM.yyyy HH:mm'); // so liest zeit() die Uhrzeit
   sh.getRange('K:K').setNumberFormat('dd.MM.yyyy');
-  const heim = SpreadsheetApp.getActiveSpreadsheet();
-  (heim.getSheetByName('JD Vertrieb') || heim.insertSheet('JD Vertrieb')).appendRow([ss.getUrl(), ss.getName()]);
-  props().setProperty('WEBSITE_TABELLE', ss.getId());
   return sh;
 }
 
@@ -425,7 +431,7 @@ function sende(title, body, url, nur) {
 // Zeitauslöser jede Minute. Gelesen wird nur, wenn sich eine Lead-Tabelle geändert hat. Gemerkt werden die
 // ids der Leads der letzten zwei Tage, alles, was dort neu auftaucht, wird gemeldet.
 function meldeNeueLeads() {
-  const stand = verbunden().map((v) => { try { return DriveApp.getFileById(v.id).getLastUpdated().getTime(); } catch (e) { return 0; } }).join();
+  const stand = verbunden().map((v) => { try { return DriveApp.getFileById(v.id.replace(WEB, '')).getLastUpdated().getTime(); } catch (e) { return 0; } }).join();
   if (stand === props().getProperty('PUSH_STAND')) return;
   const grenze = berlin(new Date(Date.now() - 2 * 864e5), "yyyy-MM-dd'T'HH:mm:ss");
   const frisch = liste().leads.filter((l) => l.datum >= grenze);
