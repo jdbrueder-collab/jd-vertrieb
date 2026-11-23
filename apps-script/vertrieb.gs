@@ -638,6 +638,7 @@ function lexAngebot(d) {
   try {
     const q = lex('/v1/quotations/' + id);
     angebot.nr = q.voucherNumber || '';
+    angebot.version = q.version;   // ändert sich, sobald jemand das Angebot in Lexware bearbeitet
     if ((q.totalPrice || {}).totalGrossAmount != null) angebot.summe = q.totalPrice.totalGrossAmount;
     const blob = lex('/v1/quotations/' + id + '/file', null, 'get', true).setName('Angebot ' + (angebot.nr || id) + '.pdf');
     pdf64 = Utilities.base64Encode(blob.getBytes());
@@ -698,10 +699,25 @@ function angebotMail(d) {
   return gesendet(Object.assign({}, d, { weg: 'Mail', an: email }));
 }
 
-// Das PDF des letzten Angebots für die App (base64). Sie teilt es per Teilen-Menü direkt in den WhatsApp-Chat.
+// Das PDF des letzten Angebots für die App (base64), jedes Mal frisch aus Lexware. Sie teilt es per Teilen-Menü direkt
+// in den WhatsApp-Chat. Wurde das Angebot in Lexware bearbeitet (neue Version), ziehen Summe und PDF-Kopie im Drive nach.
 function angebotPdf(d) {
-  const a = JSON.parse(props().getProperty('ANGEBOT_' + d.id) || 'null');
+  const key = 'ANGEBOT_' + d.id, a = JSON.parse(props().getProperty(key) || 'null');
   if (!a) throw fehler('weg', 'Zu diesem Lead gibt es noch kein Angebot.');
-  const blob = lex('/v1/quotations/' + a.link.split('/').pop() + '/file', null, 'get', true);
-  return { nr: a.nr, daten: Utilities.base64Encode(blob.getBytes()) };
+  const id = a.link.split('/').pop(), q = lex('/v1/quotations/' + id);
+  a.nr = q.voucherNumber || a.nr;
+  const blob = lex('/v1/quotations/' + id + '/file', null, 'get', true).setName('Angebot ' + a.nr + '.pdf');
+  if (q.version !== a.version) {
+    if (a.version != null) a.geaendert = berlin(new Date(q.updatedDate || Date.now()), 'yyyy-MM-dd');
+    a.version = q.version;
+    if ((q.totalPrice || {}).totalGrossAmount != null) a.summe = q.totalPrice.totalGrossAmount;
+    try {
+      const datei = fotoOrdner(d.id, true).createFile(blob), alt = (String(a.pdf).match(/\/d\/([\w-]+)/) || [])[1];
+      try { datei.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) { }
+      if (alt) try { DriveApp.getFileById(alt).setTrashed(true); } catch (e) { }   // alte Fassung in den Papierkorb
+      a.pdf = datei.getUrl();
+    } catch (e) { console.warn('Angebot ' + id + ': ' + e.message); }
+    props().setProperty(key, JSON.stringify(a));
+  }
+  return { nr: a.nr, daten: Utilities.base64Encode(blob.getBytes()), angebot: a };
 }

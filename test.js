@@ -34,7 +34,7 @@ function welt(props) {
     ['', '', '', '', '', '', 'Von Hand', '0171 4444444', 'Offen', '', ''],
   ]);
   const heim = blatt([['Link'], ['https://docs.google.com/spreadsheets/d/' + A + '/edit?usp=sharing', ''], ['https://docs.google.com/spreadsheets/d/' + KAPUTT + '/edit', 'Alt']]);
-  const feedback = [], cache = {}, pushes = [], mails = [], drive = { ordner: [], geaendert: 1, weg: [] };
+  const feedback = [], cache = {}, pushes = [], mails = [], drive = { ordner: [], geaendert: 1, weg: [], papierkorb: [] };
   // Nachgebautes Lexware: merkt sich Anfragen, Antworten lassen sich vorgeben (z. B. 429)
   const lexware = { anfragen: [], naechste: [], vorhanden: [] };   // vorhanden: Kunden, die es in Lexware schon gibt
   const lexAntwort = (url, o) => {
@@ -54,7 +54,7 @@ function welt(props) {
     else if (pfad === '/v1/contacts/K-1' && o.method === 'get') j = JSON.parse(JSON.stringify(lexware.kontakt));
     else if (pfad === '/v1/contacts/K-1' && o.method === 'put') { lexware.kontakt = Object.assign(body, { version: body.version + 1 }); j = { id: 'K-1' }; }
     else if (pfad === '/v1/quotations?finalize=true') j = { id: 'Q-1', version: 1 };
-    else if (pfad === '/v1/quotations/Q-1') j = { id: 'Q-1', voucherNumber: 'AG0049', voucherStatus: 'open', totalPrice: { totalGrossAmount: 409.56 } };
+    else if (pfad === '/v1/quotations/Q-1') j = Object.assign({ id: 'Q-1', version: 1, voucherNumber: 'AG0049', voucherStatus: 'open', totalPrice: { totalGrossAmount: 409.56 } }, lexware.angebot);   // angebot: in Lexware bearbeitet
     else if (pfad === '/v1/quotations/Q-1/file') return { getResponseCode: () => 200, getBlob: () => ({ bytes: '%PDF', getBytes: () => [37, 80, 68, 70], setName(n) { this.name = n; return this; } }) };
     return { getResponseCode: () => j ? 200 : 404, getContentText: () => JSON.stringify(j || {}) };
   };
@@ -86,7 +86,7 @@ function welt(props) {
     PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] ?? null, setProperty: (k, v) => { props[k] = v; }, setProperties: (o) => Object.assign(props, o), deleteProperty: (k) => { delete props[k]; }, getProperties: () => ({ ...props }) }) },
     DriveApp: {
       Access: { ANYONE_WITH_LINK: 'jeder' }, Permission: { VIEW: 'ansehen' },
-      getFileById: () => ({ getLastUpdated: () => new Date(drive.geaendert) }),
+      getFileById: (id) => ({ getLastUpdated: () => new Date(drive.geaendert), setTrashed: (j) => { if (j) drive.papierkorb.push(id); } }),
       createFolder: (n) => ordner(n), getFolderById: (id) => drive.ordner.find((o) => o.id === id), getRootFolder: () => ({}),
     },
     CacheService: { getScriptCache: () => ({ get: (k) => cache[k], put: (k, v) => { cache[k] = v; } }) },
@@ -324,10 +324,24 @@ assert.match(q.remark, /Auftragserteilung/);
 assert.strictEqual(JSON.stringify(q.lineItems[0]), '{"id":"A1","type":"service","name":"Interieur Aufbereitung","quantity":2,"unitName":"Stück","unitPrice":{"currency":"EUR","netAmount":190,"taxRatePercentage":19},"description":"Sitze, Teppich, Himmel"}');
 assert.strictEqual(JSON.stringify(q.lineItems[1]), '{"type":"custom","name":"Lederpflege","quantity":1,"unitName":"Pauschal","unitPrice":{"currency":"EUR","netAmount":50,"taxRatePercentage":19}}');
 assert.strictEqual(w.lexware.anfragen.find((x) => x.pfad.endsWith('/file')).accept, 'application/pdf');
-assert.strictEqual(JSON.stringify(r.angebot), JSON.stringify({ nr: 'AG0049', summe: 409.56, pdf: 'https://datei/Angebot AG0049.pdf', link: 'https://app.lexware.de/permalink/quotations/view/Q-1', datum: r.angebot.datum }));
+assert.strictEqual(JSON.stringify(r.angebot), JSON.stringify({ nr: 'AG0049', summe: 409.56, pdf: 'https://datei/Angebot AG0049.pdf', link: 'https://app.lexware.de/permalink/quotations/view/Q-1', datum: r.angebot.datum, version: 1 }));
 assert.ok(w.drive.ordner.some((o) => o.dateien.some((d) => d.name === 'Angebot AG0049.pdf')));
 assert.strictEqual(r.pdf64, 'JVBERg==');   // das PDF selbst für WhatsApp
-assert.strictEqual(JSON.stringify(w.post({ aktion: 'angebotPdf', pw, id: anna })), '{"ok":true,"nr":"AG0049","daten":"JVBERg=="}');
+let pdf = w.post({ aktion: 'angebotPdf', pw, id: anna });
+assert.strictEqual(pdf.daten, 'JVBERg=='); assert.strictEqual(pdf.angebot.summe, 409.56); assert.strictEqual(pdf.angebot.geaendert, undefined);
+// In Lexware bearbeitet (neue Version, neue Summe): App bekommt die neue Fassung, die alte Kopie im Drive fliegt in den Papierkorb
+const dateienVorher = w.drive.ordner.reduce((n, o) => n + o.dateien.length, 0);
+w.props['ANGEBOT_' + anna] = JSON.stringify(Object.assign(pdf.angebot, { pdf: 'https://drive.google.com/file/d/ALT-1/view?usp=drivesdk' }));
+w.lexware.angebot = { version: 3, updatedDate: '2026-11-23T10:00:00.000+01:00', totalPrice: { totalGrossAmount: 499 } };
+pdf = w.post({ aktion: 'angebotPdf', pw, id: anna });
+assert.strictEqual(pdf.angebot.summe, 499); assert.strictEqual(pdf.angebot.version, 3); assert.strictEqual(pdf.angebot.geaendert, '2026-11-23');
+assert.strictEqual(pdf.angebot.pdf, 'https://datei/Angebot AG0049.pdf');
+assert.strictEqual(w.drive.ordner.reduce((n, o) => n + o.dateien.length, 0), dateienVorher + 1);
+assert.strictEqual(w.drive.papierkorb.join(), 'ALT-1');
+assert.strictEqual(w.post({ aktion: 'liste', pw }).leads.find((l) => l.id === anna).angebot.summe, 499);
+w.post({ aktion: 'angebotPdf', pw, id: anna });   // unverändert: keine weitere Kopie
+assert.strictEqual(w.drive.ordner.reduce((n, o) => n + o.dateien.length, 0), dateienVorher + 1);
+delete w.lexware.angebot;
 assert.strictEqual(w.post({ aktion: 'angebotPdf', pw, id: ben }).code, 'weg');
 assert.match(r.lead.notizen, /David: Angebot AG0049 erstellt \(409,56 €, 20 % Rabatt\): 2× Interieur Aufbereitung, Lederpflege$/);
 assert.strictEqual(w.post({ aktion: 'liste', pw }).leads.find((l) => l.id === anna).angebot.nr, 'AG0049');

@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '27';
+const VERSION = '28';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -339,7 +339,7 @@ function openLead(id, fokus) {
   sheet(leadHtml(l));
   if (!fotoCache[id]) fotosLaden(id);
   if (lexAn && !kundeCache[id]) kundeLaden(id);
-  if (lexAn && l.angebot && pdfCache[id]?.nr !== l.angebot.nr) pdfLaden(id);
+  if (lexAn && l.angebot && !(Date.now() - pdfCache[id]?.zeit < 60000)) pdfLaden(id);   // jedes Mal frisch, außer gerade erst geholt
   const entwurf = lies('jdv-entwurf', {});
   if (entwurf[id]) { $('#notiz').value = entwurf[id]; delete entwurf[id]; merke('jdv-entwurf', entwurf); }
   if (fokus) setTimeout(() => $('#notiz')?.focus(), 300);
@@ -530,16 +530,20 @@ function kundeBlock(l) {
   const id = js(l.id), a = l.angebot, k = kundeCache[l.id] || l.kunde || {};
   const feld = (f, name, extra = '') => `<div class="row"><label for="k-${f}">${name}</label><input id="k-${f}" value="${esc(k[f] || '')}" autocomplete="off" onchange="kundeGeaendert(${id})"${extra}></div>`;
   // Neues Angebot: Knopf „Angebot“ in der festen Leiste unten, auch mitten im Telefonat ohne Scrollen
-  return `${a ? `<div class="label">Letztes Angebot</div>
-    <div class="card" id="angebotkarte">
-      <p class="angebotzeile"><span><b>${esc(a.nr || 'Angebot')}</b> · ${euro(a.summe)}</span><span class="muted">${a.datum ? 'vom ' + datumKurz(a.datum) : ''}</span></p>
-      ${a.pdf ? `<div class="drei"><button class="pill" onclick="angebotWhatsApp(${id})">${ICON.wa}WhatsApp</button><button class="pill" onclick="angebotMail(${id}, this)">✉️ Mail</button><a class="pill" href="${esc(a.pdf)}" target="_blank" rel="noopener">📄 PDF</a></div>
-      <p class="hint" style="margin:var(--gap) 0 0">WhatsApp: im Teilen-Menü WhatsApp Business und dann den Kunden wählen. Taucht er nicht auf, erst unten über WhatsApp den Chat öffnen.</p>`
-        : `<a class="pill wide" style="margin:0" href="${esc(a.link)}" target="_blank" rel="noopener">Das PDF fehlt noch. In Lexware öffnen ↗</a>`}
-    </div>` : ''}
+  return `${a ? `<div class="label">Letztes Angebot</div>${angebotKarte(l)}` : ''}
     <div class="label">Kundendaten</div>
     <div class="group" id="kunde">${feld('email', 'E-Mail', ' type="email" inputmode="email" autocapitalize="off"')}${feld('strasse', 'Straße')}${feld('plz', 'PLZ', ' inputmode="numeric" maxlength="10"')}${feld('ort', 'Ort')}</div>
     <p class="hint">Wird direkt in Lexware gespeichert.${l.lex ? ` <a href="${esc(LEX_APP + 'contacts/view/' + l.lex)}" target="_blank" rel="noopener">Kunde in Lexware ↗</a>` : ''}</p>`;
+}
+// Summe und PDF kommen beim Öffnen frisch aus Lexware, auch wenn dort jemand das Angebot bearbeitet hat
+function angebotKarte(l) {
+  const id = js(l.id), a = l.angebot;
+  return `<div class="card" id="angebotkarte">
+      <p class="angebotzeile"><span><b>${esc(a.nr || 'Angebot')}</b> · ${euro(a.summe)}</span><span class="muted">${a.geaendert ? 'geändert ' + datumKurz(a.geaendert) : a.datum ? 'vom ' + datumKurz(a.datum) : ''}</span></p>
+      ${a.pdf ? `<div class="drei"><button class="pill" onclick="angebotWhatsApp(${id})">${ICON.wa}WhatsApp</button><button class="pill" onclick="angebotMail(${id}, this)">✉️ Mail</button><a class="pill" href="${esc(a.pdf)}" target="_blank" rel="noopener">📄 PDF</a></div>
+      <p class="hint" style="margin:var(--gap) 0 0">WhatsApp: im Teilen-Menü WhatsApp Business und dann den Kunden wählen. Taucht er nicht auf, erst unten über WhatsApp den Chat öffnen.</p>`
+        : `<a class="pill wide" style="margin:0" href="${esc(a.link)}" target="_blank" rel="noopener">Das PDF fehlt noch. In Lexware öffnen ↗</a>`}
+    </div>`;
 }
 const kundeFelder = () => Object.fromEntries(['email', 'strasse', 'plz', 'ort'].map(f => [f, $('#k-' + f)?.value.trim() || '']));
 async function kundeLaden(id) {
@@ -566,15 +570,25 @@ function kundeGeaendert(id) {
 // Verschickt: Vermerk im Verlauf, und ohne geplanten Rückruf trägt das Skript Nachfassen in 3 Tagen ein
 // PDF des letzten Angebots holen und als Datei bereithalten. Teilen muss direkt beim Tippen passieren,
 // sonst blockt iOS, deshalb wird vorgeladen.
-const alsPdf = (b64, nr) => ({ nr, datei: new File([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], `Angebot ${nr}.pdf`, { type: 'application/pdf' }) });
+const alsPdf = (b64, nr) => ({ nr, zeit: Date.now(), datei: new File([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], `Angebot ${nr}.pdf`, { type: 'application/pdf' }) });
 async function pdfLaden(id) {
-  try { const j = await api('angebotPdf', { id }); pdfCache[id] = alsPdf(j.daten, j.nr); } catch (e) { if (offen === id) toast(e.message); }
+  pdfCache[id] = { zeit: Date.now() };   // lädt: die alte Fassung nicht mehr verschicken
+  try {
+    const j = await api('angebotPdf', { id }), l = leads.find(x => x.id === id);
+    pdfCache[id] = alsPdf(j.daten, j.nr);
+    if (!l || !j.angebot) return;
+    const neu = l.angebot?.version != null && l.angebot.version !== j.angebot.version;
+    l.angebot = j.angebot;
+    const karte = offen === id && $('#angebotkarte');
+    if (karte) karte.outerHTML = angebotKarte(l);
+    if (neu && offen === id) toast(`Angebot ${j.nr} wurde in Lexware geändert. Die neue Fassung ist geladen.`);
+  } catch (e) { delete pdfCache[id]; if (offen === id) toast(e.message); }
 }
 // WhatsApp: das PDF selbst geht über das Teilen-Menü in den Chat (kein Link)
 async function angebotWhatsApp(id) {
   const l = leads.find(x => x.id === id), a = l?.angebot, p = pdfCache[id];
   if (!a) return;
-  if (!p || p.nr !== a.nr) { toast('Das PDF lädt noch. Tipp gleich nochmal.'); return pdfLaden(id); }
+  if (!p?.datei || p.nr !== a.nr) { toast('Das PDF lädt noch. Tipp gleich nochmal.'); return p && !p.datei ? null : pdfLaden(id); }
   if (!navigator.canShare?.({ files: [p.datei] })) return toast('Dieses Gerät kann keine Dateien teilen. Nimm das iPhone.');
   try { await navigator.share({ files: [p.datei], text: fuelle(texte.TEXT_ANGEBOT_WA, l) }); }
   catch (e) { return e.name === 'AbortError' ? null : toast('Teilen hat nicht geklappt.'); }
@@ -922,7 +936,7 @@ function demoApi(aktion, d) {
       ['a3', 'Interieur Aufbereitung', 226.1, 'Stück'], ['a4', 'Lackaufbereitung One-Step-Politur', 380.8, 'Aufwand'], ['a5', 'Polierarbeiten', 65.45, 'Stunde'],
       ['a6', 'Reinigung & Pflege von Ledersitzen', 41.65, 'Stück'], ['a7', '2 Stufen Keramikversiegelung', 714, 'Stück']].map(([id, name, preis, einheit]) => ({ id, name, preis, einheit }));
     if (aktion === 'lexArtikel') return ok({ firma: 'JD Brüder (Demo)', artikel: artikel.map(a => ({ ...a, aus: (window.DEMO_AUS || []).includes(a.id) })) });
-    if (aktion === 'angebotPdf') return ok({ nr: l.angebot.nr, daten: btoa('%PDF-1.4 Demo') });
+    if (aktion === 'angebotPdf') return ok({ nr: l.angebot.nr, daten: btoa('%PDF-1.4 Demo'), angebot: l.angebot });
     if (aktion === 'angebotMail') {
       vermerk(`Angebot ${l.angebot.nr} per Mail an ${d.email} geschickt`); l.angebot.gesendet = heute();
       return ok({ lead: kopie(l), angebot: l.angebot, nachfassen: '' });
