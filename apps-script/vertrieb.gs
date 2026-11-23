@@ -42,8 +42,8 @@ function doPost(e) {
   let out;
   try {
     const d = JSON.parse(e.postData.contents);
-    pruefe(d.pw);
-    const aktion = { liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos, vorlage, lexArtikel, lexDaten, lexAngebot, gesendet, angebotMail, angebotPdf, artikelAus, nachziehen }[d.aktion];
+    if (d.aktion !== 'anfrage') pruefe(d.pw); // nur das Anfrageformular der Website kommt ohne Passwort
+    const aktion = { anfrage, liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos, vorlage, lexArtikel, lexDaten, lexAngebot, gesendet, angebotMail, angebotPdf, artikelAus, nachziehen }[d.aktion];
     if (!aktion) throw fehler('aktion', 'Unbekannte Aktion.');
     out = Object.assign({ ok: true }, aktion(d));
   } catch (err) {
@@ -310,6 +310,49 @@ function vorlage(d) {
   if (k === 'WA_VORLAGE' && t && (!t.includes('{Name}') || !t.includes('{Wunsch}'))) throw fehler('vorlage', '{Name} und {Wunsch} müssen in der Nachricht bleiben.');
   if (t) props().setProperty(k, t); else props().deleteProperty(k);
   return {};
+}
+
+// ---------- Anfrageformular der Website (jd-brueder) ----------
+// Gleiche Fragen wie das Meta-Formular, dazu die E-Mail. Jede Anfrage wird eine Zeile in der Tabelle
+// „Website-Anfragen“ und landet so wie Meta-Leads in der App (Push, Lexware-Kontakt, WhatsApp-Texte).
+const INTERESSEN = ['referenzauto', 'leasing', 'aufbereitung', 'folie', 'anderes']; // Schlüssel wie im Meta-Formular
+function anfrage(d) {
+  if (d.web) return {}; // verstecktes Feld, das nur Bots ausfüllen
+  const f = (k, max) => String(d[k] || '').trim().slice(0, max);
+  const a = { interesse: f('interesse', 20), fahrzeug: f('fahrzeug', 80), name: f('name', 80), telefon: f('telefon', 30), email: f('email', 120) };
+  if (!INTERESSEN.includes(a.interesse) || a.fahrzeug.length < 2 || a.name.length < 2
+    || a.telefon.replace(/\D/g, '').length < 6 || !MAIL_OK.test(a.email)) throw fehler('eingabe', 'Bitte füllen Sie alle Felder aus.');
+  const cache = CacheService.getScriptCache(), n = Number(cache.get('anfragen') || 0);
+  if (n >= 30) throw fehler('viel', 'Gerade kommen sehr viele Anfragen an.');
+  cache.put('anfragen', String(n + 1), 3600);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    // Apostroph = als Text speichern: keine Formeln, und die 0 vorn in der Telefonnummer bleibt.
+    websiteTabelle().appendRow(['web-' + Utilities.getUuid().slice(0, 8), new Date(), 'Website', a.interesse,
+      "'" + a.fahrzeug, "'" + a.name, "'" + a.telefon, "'" + a.email]);
+  } finally {
+    lock.releaseLock();
+  }
+  return {};
+}
+
+// Beim ersten Mal legt das Skript die Tabelle an und trägt sie im Reiter „JD Vertrieb“ ein, damit die App sie liest.
+function websiteTabelle() {
+  const id = props().getProperty('WEBSITE_TABELLE');
+  if (id) return SpreadsheetApp.openById(id).getSheets()[0];
+  const ss = SpreadsheetApp.create('Website-Anfragen');
+  ss.setSpreadsheetTimeZone('Europe/Berlin');
+  ss.setSpreadsheetLocale('de_DE');
+  const sh = ss.getSheets()[0];
+  sh.appendRow(['id', 'created_time', 'platform', 'interesse', 'fahrzeug', 'full_name', 'phone_number', 'email', 'lead_status', 'Notiz', 'Termin']);
+  sh.setFrozenRows(1);
+  sh.getRange('B:B').setNumberFormat('dd.MM.yyyy HH:mm'); // so liest zeit() die Uhrzeit
+  sh.getRange('K:K').setNumberFormat('dd.MM.yyyy');
+  const heim = SpreadsheetApp.getActiveSpreadsheet();
+  (heim.getSheetByName('JD Vertrieb') || heim.insertSheet('JD Vertrieb')).appendRow([ss.getUrl(), ss.getName()]);
+  props().setProperty('WEBSITE_TABELLE', ss.getId());
+  return sh;
 }
 
 // Feedback-Lampe: landet in dieser Tabelle im Reiter "Feedback".

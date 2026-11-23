@@ -15,12 +15,14 @@ function blatt(rows) {
     getValue: () => (rows[r - 1] || [])[c - 1] ?? '',
     getDisplayValues: () => Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => zeige((rows[r - 1 + i] || [])[c - 1 + j] ?? ''))),
     setValue: (x) => { (rows[r - 1] ||= [])[c - 1] = x; },
+    setNumberFormat() {},
     createTextFinder: (text) => ({
       matchEntireCell() { return this; },
       findNext: () => { for (let i = 0; i < nr; i++) if (String((rows[r - 1 + i] || [])[c - 1]) === text) return { getRow: () => r + i }; return null; },
     }),
   });
-  return { rows, getRange: range, getLastRow: () => rows.length, getDataRange: () => range(1, 1, rows.length, breite()), appendRow: (z) => rows.push(z) };
+  return { rows, getRange: range, getLastRow: () => rows.length, getDataRange: () => range(1, 1, rows.length, breite()), setFrozenRows() {},
+    appendRow: (z) => rows.push(z.map((x) => (typeof x === 'string' && x.startsWith("'") ? x.slice(1) : x))) }; // Apostroph = Text, wie in Sheets
 }
 
 function welt(props) {
@@ -34,6 +36,10 @@ function welt(props) {
     ['', '', '', '', '', '', 'Von Hand', '0171 4444444', 'Offen', '', ''],
   ]);
   const heim = blatt([['Link'], ['https://docs.google.com/spreadsheets/d/' + A + '/edit?usp=sharing', ''], ['https://docs.google.com/spreadsheets/d/' + KAPUTT + '/edit', 'Alt']]);
+  // Tabelle, die das Anfrageformular der Website beim ersten Mal anlegt
+  const WEB = 'WEBSITE_ANFRAGEN_1234567890', web = blatt([]);
+  const webSS = { getSheets: () => [web], getName: () => 'Website-Anfragen', getId: () => WEB, getUrl: () => 'https://docs.google.com/spreadsheets/d/' + WEB + '/edit',
+    setSpreadsheetTimeZone() {}, setSpreadsheetLocale() {} };
   const feedback = [], cache = {}, pushes = [], mails = [], drive = { ordner: [], geaendert: 1, weg: [], papierkorb: [] };
   // Nachgebautes Lexware: merkt sich Anfragen, Antworten lassen sich vorgeben (z. B. 429)
   const lexware = { anfragen: [], naechste: [], vorhanden: [] };   // vorhanden: Kunden, die es in Lexware schon gibt
@@ -80,10 +86,12 @@ function welt(props) {
       getActiveSpreadsheet: () => ({
         // Skript liegt in einer Lead-Tabelle: erster Reiter sind Leads, die Links stehen im zweiten
         getSheets: () => [blatt([['id', 'created_time'], ['l:77', '20.11.2026 10:00']]), heim], getUrl: () => 'https://heim',
-        getSheetByName: (n) => (n === 'Feedback' && feedback.length ? { appendRow: (r) => feedback.push(r) } : null),
+        getSheetByName: (n) => (n === 'JD Vertrieb' ? heim : n === 'Feedback' && feedback.length ? { appendRow: (r) => feedback.push(r) } : null),
         insertSheet: () => ({ appendRow: (r) => feedback.push(r) }),
       }),
+      create: () => webSS,
       openById: (id) => {
+        if (id === WEB) return webSS;
         if (id !== A) throw new Error('Datei nicht gefunden');
         return { getSheets: () => [blatt([['Nur ein Hinweis']]), lead], getName: () => 'Leads November 2026', getUrl: () => 'https://a' }; // ohne Zeitzone, wie die echte Tabelle
       },
@@ -119,7 +127,7 @@ function welt(props) {
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(__dirname + '/apps-script/vertrieb.gs', 'utf8'), ctx);
   const post = (d) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(d) } }).t);
-  return { post, ctx, lexware, mails, props, pushes, drive, aendern: () => drive.geaendert++, lead: lead.rows, heim: heim.rows, feedback, cache, claude: () => claudeBody };
+  return { post, ctx, lexware, mails, props, pushes, drive, aendern: () => drive.geaendert++, lead: lead.rows, heim: heim.rows, web: web.rows, feedback, cache, claude: () => claudeBody };
 }
 
 const w = welt({ TEAM_PASSWORT: 'geheim', ANTHROPIC_API_KEY: 'sk-ant-api-test', PUSH_GEHEIMNIS: 'push-geheim' });
@@ -437,6 +445,30 @@ assert.strictEqual(w.post({ aktion: 'lexAngebot', pw, id: anna, posten: [{ name:
 w.cache.LEX_PROFIL = undefined;
 w.lexware.naechste.push({ code: 401, body: { message: 'Unauthorized' } });
 assert.match(w.post({ aktion: 'lexArtikel', pw }).fehler, /lehnt den Schlüssel ab/);
+
+// Anfrageformular der Website: ohne Passwort, legt beim ersten Mal die Tabelle an und trägt sie ein, dann ein Lead wie von Meta
+const eva = { aktion: 'anfrage', interesse: 'aufbereitung', fahrzeug: 'VW Golf 8', name: 'Eva Web', telefon: '0171 6666666', email: 'eva@example.de' };
+assert.strictEqual(w.post({ ...eva, email: 'kaputt' }).code, 'eingabe');
+assert.strictEqual(w.post({ ...eva, interesse: 'quatsch' }).code, 'eingabe');
+assert.ok(w.post({ ...eva, web: 'bot' }).ok);              // Bot-Falle: angenommen, aber nichts gespeichert
+assert.strictEqual(w.props.WEBSITE_TABELLE, undefined);
+r = w.post({ ...eva, name: '=HYPERLINK("x")' });
+assert.ok(r.ok, r.fehler);
+assert.strictEqual(w.web[0].join(), 'id,created_time,platform,interesse,fahrzeug,full_name,phone_number,email,lead_status,Notiz,Termin');
+assert.strictEqual(w.heim.at(-1)[1], 'Website-Anfragen');  // im Reiter „JD Vertrieb“ eingetragen
+assert.ok(w.post(eva).ok);
+assert.strictEqual(w.web.length, 3);                       // Tabelle nur einmal angelegt
+r = w.post({ aktion: 'liste', pw });
+const l = r.leads.find((x) => x.name === 'Eva Web');
+assert.strictEqual(JSON.stringify(l.antworten), '[["Interesse","Aufbereitung"],["Fahrzeug","VW Golf 8"]]');
+assert.strictEqual(l.kunde.email, 'eva@example.de');
+assert.strictEqual(l.telefon, '0171 6666666');
+assert.strictEqual(l.wa, 'https://wa.me/491716666666');
+assert.strictEqual(l.quelle, 'Website');
+assert.strictEqual(l.status, 'Neu');
+assert.ok(r.leads.some((x) => x.name === '=HYPERLINK("x")'));  // als Text gespeichert, nicht als Formel
+w.cache.anfragen = '30';
+assert.strictEqual(w.post(eva).code, 'viel');             // höchstens 30 Anfragen pro Stunde
 
 // Sperre nach 10 Fehlversuchen
 for (let i = 0; i < 10; i++) w.post({ aktion: 'liste', pw: 'falsch' });
