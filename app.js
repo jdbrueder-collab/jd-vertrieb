@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '37';
+const VERSION = '38';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -272,7 +272,11 @@ function saeulen(titel, eintraege, von, bis, farben, zahl, zusatz = '') {
   eintraege.forEach(e => { const t = toepfe.get(schluessel(new Date(e.t + 'T12:00'))); if (t) t[e.g] = (t[e.g] || 0) + e.w; });
   const liste = [...toepfe].slice(-26), summe = t => Object.values(t).reduce((a, b) => a + b, 0), max = Math.max(...liste.map(([, t]) => summe(t))) || 1;
   const name = k => woche ? 'Woche ab ' + datumKurz(k) : datumKurz(k);
-  return `<div class="card"><p class="kartenkopf"><b>${titel} pro ${woche ? 'Woche' : 'Tag'}${zusatz}</b><span class="muted">höchstens ${zahl(max)}</span></p>
+  const gesamt = {}, alles = eintraege.reduce((s, e) => { gesamt[e.g] = (gesamt[e.g] || 0) + e.w; return s + e.w; }, 0);
+  // Antippen: Säulen verschwimmen, davor steht, was die Farben bedeuten (mit Summe im Zeitraum). Nochmal tippen schließt.
+  return `<div class="card saeulenkarte" role="button" tabindex="0" aria-label="${esc(titel)}: Farben erklären" onclick="this.classList.toggle('zeigen')" onkeydown="if(event.key==='Enter')this.click()">
+    <div class="ueber" aria-hidden="true"><ul class="legende">${Object.keys(farben).filter(g => gesamt[g]).map(g => `<li><span class="dot" style="--c:${farben[g]}"></span><span>${esc(g)}</span><b>${esc(zahl(gesamt[g]))}</b><span class="muted">${proz(gesamt[g], alles)}</span></li>`).join('')}</ul></div>
+    <p class="kartenkopf"><b>${titel} pro ${woche ? 'Woche' : 'Tag'}${zusatz}</b><span class="muted">höchstens ${zahl(max)}</span></p>
     <div class="saeulen">${liste.map(([k, t]) => `<span title="${esc(name(k))}: ${esc(zahl(summe(t)))}" aria-label="${esc(name(k))}: ${esc(zahl(summe(t)))}">${Object.keys(farben).filter(g => t[g]).map(g => `<i style="height:${t[g] / max * 100}%;background:${farben[g]}"></i>`).join('')}</span>`).join('')}</div>
     <p class="achse muted"><span>${esc(datumKurz(liste[0][0]))}</span><span>${esc(datumKurz(liste[liste.length - 1][0]))}</span></p></div>`;
 }
