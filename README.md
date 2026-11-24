@@ -62,16 +62,18 @@ Ist `LEXWARE_API_KEY` hinterlegt (Skripteigenschaft im Google-Skript), passiert 
 
 ## Statistik
 
-Eigener Tab in der Menüleiste (Kreis-Symbol). Oben der Zeitraum: *7 Tage*, *Monat* (seit dem 1.), *Vormonat*, *Alles*. Darunter:
-- **Kennzahlen:** Ausgaben bei Meta, Leads (davon Meta und Website), Kosten pro Lead (Ausgaben geteilt durch die Meta-Leads aus den Tabellen), Angebotswert.
+Eigener Tab in der Menüleiste (Kreis-Symbol). Oben der Zeitraum: *7 Tage*, *Monat* (seit dem 1.), *Vormonat*, *Alles* (seit dem ersten Lead). Darunter:
+- **Kennzahlen:** Ausgaben bei Meta, Leads (davon Meta und Website), Kosten pro Lead (Ausgaben geteilt durch die Meta-Leads aus den Tabellen), ROAS, Angebotswert, Eingenommen.
 - **Woher die Leads kommen:** Kreisdiagramm Instagram, Facebook, Website.
 - **Was aus den Leads wurde:** Tabelle je Status, getrennt nach Meta und Website.
 - **Vom Lead zum Auftrag:** Leads, Erreicht (nicht mehr Neu und nicht „Nicht erreicht“), Termin (Terminiert und Auftrag), Auftrag, jeweils mit Anteil.
 - **Leads pro Tag** (bis 31 Tage, sonst pro Woche), nach Quelle gestapelt.
+- **ROAS** (Return on Ad Spend = Umsatz brutto geteilt durch Meta-Ausgaben im Zeitraum) dreimal: aus offenen und angenommenen Angeboten, aus geschriebenen Rechnungen und aus bezahlten Rechnungen. Gezählt werden nur Lexware-Kunden, die über einen Meta-Lead kamen (in der App verknüpft, `LEX_<Lead-id>`). Die Kachel oben zeigt den ROAS aus Rechnungen.
+- **Rechnungen** (alle Kunden): im Zeitraum geschrieben als Kreisdiagramm bezahlt, offen, überfällig; **Eingenommen pro Tag/Woche** und **Zuletzt bezahlt** mit Kunde und Betrag. Bezahlt-Datum ist der Tag, an dem Lexware die Zahlung zugeordnet hat (`updatedDate`); das genaue Buchungsdatum bräuchte eine Lexware-Anfrage je Rechnung.
 - **Was Meta kostet:** Ausgaben, pro Lead, pro Termin, pro Auftrag, pro Klick, Impressionen.
 - **Angebote in Lexware:** alle fertigen Angebote mit Angebotsdatum im Zeitraum (brutto, auch nicht über die App geschriebene) als Kreisdiagramm angenommen, offen, abgelehnt.
 
-Leads und Status zählt die App selbst. Ausgaben und Angebote holt das Skript (Aktion `statistik`, 5 Minuten zwischengespeichert, Aktualisieren holt neu). **Meta verbinden:** In den Skripteigenschaften `META_TOKEN` eintragen, einen Meta-Zugriffsschlüssel mit dem Recht `ads_read` (am besten von einem Systemnutzer im Business Manager, der läuft nicht ab). Das Werbekonto sucht das Skript selbst und merkt es sich in `META_KONTO` (dort lässt es sich auch von Hand setzen, z. B. `act_123…`). Läuft der Schlüssel ab, sagt der Tab das.
+Leads, Status und ROAS rechnet die App selbst. Ausgaben, Angebote und Rechnungen holt das Skript (Aktion `statistik`, 5 Minuten zwischengespeichert, Aktualisieren holt neu). **Meta verbinden:** In den Skripteigenschaften `META_TOKEN` eintragen, einen Meta-Zugriffsschlüssel mit dem Recht `ads_read` (am besten von einem Systemnutzer im Business Manager, der läuft nicht ab). Das Werbekonto sucht das Skript selbst und merkt es sich in `META_KONTO` (dort lässt es sich auch von Hand setzen, z. B. `act_123…`). Läuft der Schlüssel ab, sagt der Tab das.
 
 ## WhatsApp von der JD-Brüder-Nummer
 

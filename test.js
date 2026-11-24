@@ -71,6 +71,7 @@ function welt(props) {
       if (c && o.method === 'put') Object.assign(c, body);
       j = c ? JSON.parse(JSON.stringify(c)) : null;
     }
+    else if (pfad.startsWith('/v1/voucherlist?voucherType=invoice')) j = { last: true, content: (lexware.rechnungen || []).filter((v) => !pfad.includes('updatedDateFrom') || v.voucherStatus === 'paid') };
     else if (pfad.startsWith('/v1/voucherlist?')) j = { last: true, content: (lexware.angebote || []).filter((v) => !pfad.includes('contactId=') || pfad.includes('contactId=' + v.contactId)) };
     else if (pfad === '/v1/quotations?finalize=true') j = { id: 'Q-1', version: 1 };
     else if (pfad === '/v1/quotations/Q-1') j = Object.assign({ id: 'Q-1', version: 1, voucherNumber: 'AG0049', voucherStatus: 'open', totalPrice: { totalGrossAmount: 409.56 } }, lexware.angebot);   // angebot: in Lexware bearbeitet
@@ -522,16 +523,23 @@ assert.strictEqual(w.post(eva).code, 'viel');             // höchstens 30 Anfra
 
 // Statistik: Meta-Ausgaben und Angebotswerte aus Lexware, jedes Teil darf einzeln scheitern
 w.lexware.angebote = [
-  { id: 'S1', contactId: 'K-1', voucherStatus: 'open', totalAmount: 100.10 },
-  { id: 'S2', contactId: 'K-2', voucherStatus: 'accepted', totalAmount: 250 },
-  { id: 'S3', contactId: 'K-3', voucherStatus: 'accepted', totalAmount: 49.95 },
-  { id: 'S4', contactId: 'K-4', voucherStatus: 'rejected', totalAmount: 80 }];
+  { id: 'S1', contactId: 'K-1', voucherStatus: 'open', totalAmount: 100.10, voucherDate: '2026-11-03T00:00:00.000+01:00' },
+  { id: 'S4', contactId: 'K-4', voucherStatus: 'rejected', totalAmount: 80, voucherDate: '2026-11-05T00:00:00.000+01:00' }];
+w.lexware.rechnungen = [
+  { id: 'R1', voucherNumber: 'RE1', contactId: 'K-1', contactName: 'Anna Alt', voucherStatus: 'paid', totalAmount: 500, openAmount: 0, voucherDate: '2026-11-02T00:00:00.000+01:00', updatedDate: '2026-11-10T09:00:00.000+01:00' },
+  { id: 'R2', voucherNumber: 'RE2', contactId: 'K-9', contactName: 'Firma X', voucherStatus: 'overdue', totalAmount: 300, openAmount: 300, voucherDate: '2026-11-04T00:00:00.000+01:00', updatedDate: '2026-11-04T00:00:00.000+01:00' }];
 w.lexware.anfragen.length = 0;
 r = w.post({ aktion: 'statistik', pw, von: '2026-11-01', bis: '2026-11-24' });
 assert.ok(r.ok, r.fehler);
 assert.match(r.meta.fehler, /META_TOKEN fehlt/);
-assert.strictEqual(JSON.stringify(r.angebote), '{"open":{"anzahl":1,"summe":100.1},"accepted":{"anzahl":2,"summe":299.95},"rejected":{"anzahl":1,"summe":80}}');
-assert.match(w.lexware.anfragen[0].pfad, /voucherType=quotation&voucherStatus=open,accepted,rejected&voucherDateFrom=2026-11-01&voucherDateTo=2026-11-24&size=250&page=0$/);
+assert.strictEqual(JSON.stringify(r.angebote[0]), '{"k":"K-1","s":"open","b":100.1,"d":"2026-11-03"}');
+assert.strictEqual(r.angebote.length, 2);
+assert.strictEqual(JSON.stringify(r.rechnungen[0]), '{"nr":"RE1","k":"K-1","name":"Anna Alt","s":"paid","b":500,"o":0,"d":"2026-11-02","u":"2026-11-10"}');
+assert.strictEqual(r.rechnungen.length, 2);   // die bezahlte kommt zweimal (geschrieben und bezahlt im Zeitraum), zählt einmal
+const belege = w.lexware.anfragen.map((x) => x.pfad);
+assert.match(belege[0], /voucherType=quotation&voucherStatus=open,accepted,rejected&voucherDateFrom=2026-11-01&voucherDateTo=2026-11-24&size=250&page=0$/);
+assert.match(belege[1], /voucherType=invoice&voucherStatus=open,paid,paidoff,voided&voucherDateFrom=2026-11-01&voucherDateTo=2026-11-24&size=250&page=0$/);
+assert.match(belege[2], /voucherType=invoice&voucherStatus=paid&updatedDateFrom=2026-11-01&size=250&page=0$/);
 w.props.META_TOKEN = 'meta-schluessel';
 r = w.post({ aktion: 'statistik', pw, von: '2026-11-01', bis: '2026-11-24' });
 assert.strictEqual(JSON.stringify(r.meta), '{"ausgaben":312.45,"impressionen":40210,"klicks":812,"waehrung":"EUR"}');

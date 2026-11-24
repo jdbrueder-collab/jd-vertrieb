@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '32';
+const VERSION = '33';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -201,23 +201,25 @@ function setupThemen() {
   ];
 }
 // ---------- Tab: Statistik ----------
-// Leads, Quellen und Status zählt die App selbst. Meta-Ausgaben und Angebotswerte (Lexware) holt das Skript.
+// Leads, Quellen und Status zählt die App selbst. Meta-Ausgaben, Angebote und Rechnungen (Lexware) holt das Skript.
+// ROAS rechnet die App, weil nur sie weiß, welche Lexware-Kunden über einen Meta-Lead kamen (l.lex).
 let statZeit = 'monat';
-const statCache = {};   // "von_bis" → { laedt, meta, angebote, fehler }
+const statCache = {};   // "von_bis" → { laedt, meta, angebote, rechnungen, fehler }
 const ZEITEN = { tage7: '7 Tage', monat: 'Monat', vormonat: 'Vormonat', alles: 'Alles' };
 const QUELLEN = { Instagram: 'var(--pink)', Facebook: 'var(--blue)', Website: 'var(--accent)', Sonstige: 'var(--grau)' };
 const quelleVon = l => QUELLEN[l.quelle] && l.quelle !== 'Sonstige' ? l.quelle : 'Sonstige';
 const istMeta = l => l.quelle === 'Instagram' || l.quelle === 'Facebook';
 const euro0 = n => Math.round(Number(n) || 0).toLocaleString('de-DE') + ' €';
 const proz = (a, b) => b ? Math.round(a / b * 100) + ' %' : '–';
+const tag10 = l => String(l.datum).slice(0, 10);
 function statZeitraum(z) {
   const d = new Date(), j = d.getFullYear(), m = d.getMonth();
   if (z === 'tage7') return { von: ymd(new Date(j, m, d.getDate() - 6)), bis: ymd(d) };
   if (z === 'monat') return { von: ymd(new Date(j, m, 1)), bis: ymd(d) };
   if (z === 'vormonat') return { von: ymd(new Date(j, m - 1, 1)), bis: ymd(new Date(j, m, 0)) };
-  return { von: '', bis: ymd(d) };
+  return { von: leads.map(tag10).filter(Boolean).sort()[0] || '', bis: ymd(d) };   // Alles = seit dem ersten Lead
 }
-// Kreisdiagramm: Teile mit 2 Punkten Luft dazwischen, in der Mitte die Summe. Die Zahlen stehen immer auch in der Legende.
+// Kreisdiagramm: Teile mit etwas Luft dazwischen, in der Mitte die Summe. Die Zahlen stehen immer auch in der Legende.
 function torte(teile, mitte, unter, breit) {   // breit: Legende braucht Platz (Beträge), auf dem Handy dann unter dem Kreis
   const summe = teile.reduce((s, t) => s + t.wert, 0), luft = teile.filter(t => t.wert).length > 1 ? 1.2 : 0;
   let ab = 25;   // oben anfangen
@@ -230,25 +232,24 @@ function torte(teile, mitte, unter, breit) {   // breit: Legende braucht Platz (
       <text x="21" y="${unter ? 21 : 22.6}" text-anchor="middle" class="t-mitte" style="font-size:${mitte.length > 5 ? 4.6 : 6.5}px">${esc(mitte)}</text>${unter ? `<text x="21" y="26" text-anchor="middle" class="t-unter">${esc(unter)}</text>` : ''}</svg>
     <ul class="legende"${breit ? ' style="min-width:220px"' : ''}>${teile.map(t => `<li><span class="dot" style="--c:${t.farbe}"></span><span>${esc(t.name)}</span><b>${esc(t.text)}</b><span class="muted">${proz(t.wert, summe)}</span></li>`).join('')}</ul></div>`;
 }
-// Leads pro Tag (bis 31 Tage) oder pro Woche, gestapelt nach Quelle
-function saeulen(ls, von, bis) {
-  if (!ls.length) return '';
-  const start = new Date((von || ls.map(l => String(l.datum).slice(0, 10)).sort()[0]) + 'T12:00'), ende = new Date(bis + 'T12:00');
-  const tage = Math.round((ende - start) / 864e5) + 1, woche = tage > 31;
+// Säulen pro Tag (bis 31 Tage) oder pro Woche, gestapelt nach Gruppe. eintraege: [{ t: 'yyyy-mm-dd', g: Gruppe, w: Wert }]
+function saeulen(titel, eintraege, von, bis, farben, zahl) {
+  if (!eintraege.length) return '';
+  const start = new Date((von || eintraege.map(e => e.t).sort()[0]) + 'T12:00'), ende = new Date(bis + 'T12:00');
+  const woche = Math.round((ende - start) / 864e5) + 1 > 31;
   const schluessel = d => { const x = new Date(d); if (woche) x.setDate(x.getDate() - (x.getDay() + 6) % 7); return ymd(x); };
   const toepfe = new Map();
   for (let d = new Date(start); d <= ende; d.setDate(d.getDate() + 1)) toepfe.set(schluessel(d), {});
-  ls.forEach(l => { const k = schluessel(new Date(String(l.datum).slice(0, 10) + 'T12:00')), t = toepfe.get(k); if (t) t[quelleVon(l)] = (t[quelleVon(l)] || 0) + 1; });
-  const liste = [...toepfe].slice(-26), max = Math.max(1, ...liste.map(([, t]) => Object.values(t).reduce((a, b) => a + b, 0)));
+  eintraege.forEach(e => { const t = toepfe.get(schluessel(new Date(e.t + 'T12:00'))); if (t) t[e.g] = (t[e.g] || 0) + e.w; });
+  const liste = [...toepfe].slice(-26), summe = t => Object.values(t).reduce((a, b) => a + b, 0), max = Math.max(...liste.map(([, t]) => summe(t))) || 1;
   const name = k => woche ? 'Woche ab ' + datumKurz(k) : datumKurz(k);
-  return `<div class="card"><p class="kartenkopf"><b>Leads pro ${woche ? 'Woche' : 'Tag'}</b><span class="muted">höchstens ${max}</span></p>
-    <div class="saeulen">${liste.map(([k, t]) => { const n = Object.values(t).reduce((a, b) => a + b, 0);
-      return `<span title="${esc(name(k))}: ${n} ${n === 1 ? 'Lead' : 'Leads'}" aria-label="${esc(name(k))}: ${n}">${Object.keys(QUELLEN).filter(q => t[q]).map(q => `<i style="height:${t[q] / max * 100}%;background:${QUELLEN[q]}"></i>`).join('')}</span>`; }).join('')}</div>
+  return `<div class="card"><p class="kartenkopf"><b>${titel} pro ${woche ? 'Woche' : 'Tag'}</b><span class="muted">höchstens ${zahl(max)}</span></p>
+    <div class="saeulen">${liste.map(([k, t]) => `<span title="${esc(name(k))}: ${esc(zahl(summe(t)))}" aria-label="${esc(name(k))}: ${esc(zahl(summe(t)))}">${Object.keys(farben).filter(g => t[g]).map(g => `<i style="height:${t[g] / max * 100}%;background:${farben[g]}"></i>`).join('')}</span>`).join('')}</div>
     <p class="achse muted"><span>${esc(datumKurz(liste[0][0]))}</span><span>${esc(datumKurz(liste[liste.length - 1][0]))}</span></p></div>`;
 }
 function renderStatistik() {
-  const { von, bis } = statZeitraum(statZeit), key = von + '_' + bis;
-  const ls = leads.filter(l => { const t = String(l.datum).slice(0, 10); return (!von || t >= von) && t <= bis; });
+  const { von, bis } = statZeitraum(statZeit), key = von + '_' + bis, imZeitraum = t => (!von || t >= von) && t <= bis;
+  const ls = leads.filter(l => imZeitraum(tag10(l)));
   let s = statCache[key];
   if (!s) {
     s = statCache[key] = { laedt: true };
@@ -258,9 +259,19 @@ function renderStatistik() {
   const meta = ls.filter(istMeta), web = ls.filter(l => l.quelle === 'Website');
   const termin = l => l.status === 'Terminiert' || l.status === 'Auftrag', erreicht = l => !['Neu', 'Nicht erreicht'].includes(l.status);
   const m = s.meta && !s.meta.fehler ? s.meta : null, ausgaben = m ? m.ausgaben : null;
-  const a = s.angebote && !s.angebote.fehler ? s.angebote : null, wert = a ? a.open.summe + a.accepted.summe + a.rejected.summe : null;
+  const ang = Array.isArray(s.angebote) ? s.angebote : null, re = Array.isArray(s.rechnungen) ? s.rechnungen : null;
+  const summe = (liste, f = () => true) => liste.filter(f).reduce((x, y) => x + y.b, 0);
+  const je = (liste, st) => ({ anzahl: liste.filter(x => x.s === st).length, summe: summe(liste, x => x.s === st) });
+  const wert = ang ? summe(ang) : null;
+  // Rechnungen: im Zeitraum geschrieben (ohne storniert), und im Zeitraum bezahlt (Tag der Zuordnung in Lexware)
+  const geschrieben = re ? re.filter(x => imZeitraum(x.d) && x.s !== 'voided' && x.s !== 'paidoff') : null;
+  const bezahlt = re ? re.filter(x => x.s === 'paid' && imZeitraum(x.u)).sort((a, b) => b.u.localeCompare(a.u)) : null;
+  const metaKunden = new Set(leads.filter(istMeta).map(l => l.lex).filter(Boolean)), vonMeta = x => metaKunden.has(x.k);
+  const roas = x => ausgaben && x != null ? (x / ausgaben).toLocaleString('de-DE', { maximumFractionDigits: 1 }) + '×' : '–';
+  const reMeta = geschrieben ? summe(geschrieben, vonMeta) : null;
   const geld = (x, fehlt) => x == null ? (s.laedt ? '…' : fehlt || '–') : euro(x);
-  const pro = (n) => ausgaben != null && n ? euro(ausgaben / n) : '–';
+  const pro = n => ausgaben != null && n ? euro(ausgaben / n) : '–';
+  const leer = text => `<p class="muted" style="margin:0">${s.laedt ? 'Lädt…' : text}</p>`;
   const hinweis = (teil, was) => !s.laedt && (s.fehler || s[teil]?.fehler) ? `<p class="hint">${esc(was)}: ${esc(s.fehler || s[teil].fehler)}</p>` : '';
   const zeile = (name, farbe, f) => `<tr><td>${farbe ? `<span class="dot" style="--c:${farbe}"></span>` : ''}${esc(name)}</td><td>${meta.filter(f).length}</td><td>${web.filter(f).length}</td><td><b>${ls.filter(f).length}</b></td></tr>`;
   const weg = [['Leads', ls.length], ['Erreicht', ls.filter(erreicht).length], ['Termin', ls.filter(termin).length], ['Auftrag', ls.filter(l => l.status === 'Auftrag').length]];
@@ -270,9 +281,11 @@ function renderStatistik() {
       <div class="tile"><b>${geld(ausgaben, 'fehlt')}</b><span>Ausgaben Meta</span></div>
       <div class="tile"><b>${ls.length}</b><span>Leads · Meta ${meta.length}, Web ${web.length}</span></div>
       <div class="tile"><b>${ausgaben == null ? geld(null) : pro(meta.length)}</b><span>Kosten pro Lead</span></div>
-      <div class="tile"><b>${geld(wert)}</b><span>Angebotswert${a ? ` · ${a.open.anzahl + a.accepted.anzahl + a.rejected.anzahl} Stück` : ''}</span></div>
+      <div class="tile"><b>${s.laedt && !m ? '…' : roas(reMeta)}</b><span>ROAS (Rechnungen)</span></div>
+      <div class="tile"><b>${geld(wert)}</b><span>Angebotswert${ang ? ` · ${ang.length} Stück` : ''}</span></div>
+      <div class="tile"><b>${geld(bezahlt && summe(bezahlt))}</b><span>Eingenommen</span></div>
     </div>
-    ${hinweis('meta', 'Meta')}${hinweis('angebote', 'Lexware')}
+    ${hinweis('meta', 'Meta')}${hinweis('angebote', 'Lexware Angebote')}${hinweis('rechnungen', 'Lexware Rechnungen')}
     ${!ls.length ? '<div class="card empty">In diesem Zeitraum sind keine Leads gekommen.</div>' : `
     <div class="card"><p class="kartenkopf"><b>Woher die Leads kommen</b></p>
       ${torte(Object.entries(QUELLEN).map(([q, farbe]) => ({ name: q, farbe, wert: ls.filter(l => quelleVon(l) === q).length })).filter(t => t.wert || t.name !== 'Sonstige').map(t => ({ ...t, text: String(t.wert) })), String(ls.length), ls.length === 1 ? 'Lead' : 'Leads')}</div>
@@ -283,7 +296,14 @@ function renderStatistik() {
     <div class="card"><p class="kartenkopf"><b>Vom Lead zum Auftrag</b></p>
       <div class="weg">${weg.map(([n, z]) => `<div><span>${n}</span><span class="spur"><i style="width:${ls.length ? z / ls.length * 100 : 0}%"></i></span><b>${z}</b><span class="muted">${proz(z, ls.length)}</span></div>`).join('')}</div>
       <p class="hint" style="margin:var(--gap) 0 0">Erreicht heißt: nicht mehr Neu und nicht „Nicht erreicht“. Termin zählt Terminiert und Auftrag.</p></div>
-    ${saeulen(ls, von, bis)}`}
+    ${saeulen('Leads', ls.map(l => ({ t: tag10(l), g: quelleVon(l), w: 1 })), von, bis, QUELLEN, String)}`}
+    <div class="card"><p class="kartenkopf"><b>ROAS</b><span class="muted">Return on Ad Spend</span></p>
+      ${m && ang && re ? `<table class="stab"><thead><tr><th>Aus Meta-Leads</th><th>Betrag</th><th>ROAS</th></tr></thead><tbody>
+        <tr><td>Angebote offen und angenommen</td><td>${euro0(summe(ang, x => vonMeta(x) && x.s !== 'rejected'))}</td><td><b>${roas(summe(ang, x => vonMeta(x) && x.s !== 'rejected'))}</b></td></tr>
+        <tr><td>Rechnungen geschrieben</td><td>${euro0(reMeta)}</td><td><b>${roas(reMeta)}</b></td></tr>
+        <tr><td>Rechnungen bezahlt</td><td>${euro0(summe(bezahlt, vonMeta))}</td><td><b>${roas(summe(bezahlt, vonMeta))}</b></td></tr></tbody></table>
+        <p class="hint" style="margin:var(--gap) 0 0">ROAS 4× heißt: Aus 1 € Werbung wurden 4 € Umsatz (brutto). Gezählt werden nur Kunden, die über einen Meta-Lead kamen und in Lexware verknüpft sind (${metaKunden.size}). Werbung im Zeitraum: ${euro(ausgaben)}.</p>`
+        : leer(m ? 'Lexware ist gerade nicht erreichbar.' : 'Dafür braucht die App die Meta-Ausgaben. Das Google-Skript braucht einen Meta-Zugriffsschlüssel (META_TOKEN).')}</div>
     <div class="card"><p class="kartenkopf"><b>Was Meta kostet</b>${m ? `<span class="muted">${m.klicks.toLocaleString('de-DE')} Klicks</span>` : ''}</p>
       ${m ? `<table class="stab"><tbody>
         <tr><td>Ausgaben</td><td><b>${euro(ausgaben)}</b></td></tr>
@@ -292,11 +312,18 @@ function renderStatistik() {
         <tr><td>pro Auftrag (${meta.filter(l => l.status === 'Auftrag').length})</td><td>${pro(meta.filter(l => l.status === 'Auftrag').length)}</td></tr>
         <tr><td>pro Klick</td><td>${pro(m.klicks)}</td></tr>
         <tr><td>Gesehen (Impressionen)</td><td>${m.impressionen.toLocaleString('de-DE')}</td></tr></tbody></table>`
-        : `<p class="muted" style="margin:0">${s.laedt ? 'Lädt…' : 'Meta ist noch nicht verbunden. Dafür braucht das Google-Skript einen Meta-Zugriffsschlüssel (META_TOKEN).'}</p>`}</div>
+        : leer('Meta ist noch nicht verbunden. Dafür braucht das Google-Skript einen Meta-Zugriffsschlüssel (META_TOKEN).')}</div>
+    <div class="card"><p class="kartenkopf"><b>Rechnungen</b><span class="muted">alle Kunden, brutto</span></p>
+      ${geschrieben ? (geschrieben.length ? torte([['Bezahlt', 'var(--ok)', 'paid'], ['Offen', 'var(--blue)', 'open'], ['Überfällig', 'var(--near)', 'overdue']].map(([name, farbe, st]) => { const x = je(geschrieben, st); return { name: `${name} (${x.anzahl})`, farbe, wert: x.summe, text: euro0(x.summe) }; }), euro0(summe(geschrieben)), 'geschrieben', true)
+        : leer('In diesem Zeitraum gibt es keine Rechnungen.')) : leer('Nicht verfügbar.')}
+      <p class="hint" style="margin:var(--gap) 0 0">Rechnungen mit Rechnungsdatum im Zeitraum, ohne stornierte.</p></div>
+    ${bezahlt ? saeulen('Eingenommen', bezahlt.map(x => ({ t: x.u, g: 'Bezahlt', w: x.b })), von, bis, { Bezahlt: 'var(--ok)' }, euro0) : ''}
+    ${bezahlt?.length ? `<div class="card"><p class="kartenkopf"><b>Zuletzt bezahlt</b><span class="muted">${bezahlt.length} · ${euro0(summe(bezahlt))}</span></p>
+      <table class="stab"><tbody>${bezahlt.slice(0, 8).map(x => `<tr><td><span class="muted">${esc(datumKurz(x.u))}</span>${esc(x.name || x.nr)}</td><td><b>${euro(x.b)}</b></td></tr>`).join('')}</tbody></table>
+      <p class="hint" style="margin:var(--gap) 0 0">Datum: der Tag, an dem Lexware die Zahlung der Rechnung zugeordnet hat.</p></div>` : ''}
     <div class="card"><p class="kartenkopf"><b>Angebote in Lexware</b><span class="muted">brutto</span></p>
-      ${a ? (wert ? torte([['Angenommen', 'var(--ok)', a.accepted], ['Offen', 'var(--blue)', a.open], ['Abgelehnt', 'var(--grau)', a.rejected]].map(([name, farbe, x]) => ({ name: `${name} (${x.anzahl})`, farbe, wert: x.summe, text: euro0(x.summe) })), euro0(wert), 'gesamt', true)
-        : '<p class="muted" style="margin:0">In diesem Zeitraum gibt es keine Angebote.</p>')
-        : `<p class="muted" style="margin:0">${s.laedt ? 'Lädt…' : 'Nicht verfügbar.'}</p>`}
+      ${ang ? (wert ? torte([['Angenommen', 'var(--ok)', 'accepted'], ['Offen', 'var(--blue)', 'open'], ['Abgelehnt', 'var(--grau)', 'rejected']].map(([name, farbe, st]) => { const x = je(ang, st); return { name: `${name} (${x.anzahl})`, farbe, wert: x.summe, text: euro0(x.summe) }; }), euro0(wert), 'gesamt', true)
+        : leer('In diesem Zeitraum gibt es keine Angebote.')) : leer('Nicht verfügbar.')}
       <p class="hint" style="margin:var(--gap) 0 0">Alle fertigen Angebote mit Angebotsdatum im Zeitraum, auch die nicht über die App geschriebenen.</p></div>`;
 }
 
@@ -1047,8 +1074,8 @@ function demoApi(aktion, d) {
     { ...lead('d2', 95, 'Markus Schmidt', 2, 'Aufbereitung', 'BMW X5', 'Neu'), quelle: 'Facebook' },
     lead('d3', 1500, 'Sabine Klein', 3, 'Referenzauto', 'Audi A4 Avant', 'Zurückrufen', '19.11.26 10:12 David: Will den Preis mit ihrem Mann besprechen und meldet sich. Heute nochmal anrufen.', 'Interessiert an einer Aufbereitung als Referenzauto, will den Preis erst mit ihrem Mann besprechen.\nNächster Schritt: Heute zurückrufen und den Termin festmachen.', heute()),
     { ...lead('d4', 2900, 'Tobias Wagner', 4, 'Aufbereitung', 'Mercedes C-Klasse', 'Nicht erreicht', '18.11.26 16:40 Jonathan: Mailbox, nichts drauf gesprochen.'), quelle: 'Website', anzeige: '' },
-    lead('d5', 4400, 'Julia Hoffmann', 5, 'Referenzauto', 'VW T6 Multivan', 'Terminiert', '17.11.26 09:05 David: Termin fest, bringt den Bus am Montag um 8 Uhr.', 'Will den T6 als Referenzauto aufbereiten lassen. Termin steht.\nNächster Schritt: Montag 8 Uhr Annahme vorbereiten.', ymd(new Date(Date.now() + 3 * 864e5))),
-    lead('d6', 9000, 'Dennis Krämer', 6, 'Anderes', 'Porsche 911', 'Auftrag', '13.11.26 14:20 Jonathan: Komplettpaket gebucht, sehr zufrieden.'),
+    { lex: 'K-d5', ...lead('d5', 4400, 'Julia Hoffmann', 5, 'Referenzauto', 'VW T6 Multivan', 'Terminiert', '17.11.26 09:05 David: Termin fest, bringt den Bus am Montag um 8 Uhr.', 'Will den T6 als Referenzauto aufbereiten lassen. Termin steht.\nNächster Schritt: Montag 8 Uhr Annahme vorbereiten.', ymd(new Date(Date.now() + 3 * 864e5))) },
+    { lex: 'K-d6', ...lead('d6', 9000, 'Dennis Krämer', 6, 'Anderes', 'Porsche 911', 'Auftrag', '13.11.26 14:20 Jonathan: Komplettpaket gebucht, sehr zufrieden.') },
   ];
   const DL = window.DEMO_LEADS, kopie = x => JSON.parse(JSON.stringify(x));
   return new Promise((ok, nein) => setTimeout(() => {
@@ -1063,8 +1090,15 @@ function demoApi(aktion, d) {
     const artikel = [['a1', 'Auftragspauschale', 58, 'Stück'], ['a2', 'Einfache Handwäsche Mittel & Oberklasse', 101.15, 'Stück'],
       ['a3', 'Interieur Aufbereitung', 226.1, 'Stück'], ['a4', 'Lackaufbereitung One-Step-Politur', 380.8, 'Aufwand'], ['a5', 'Polierarbeiten', 65.45, 'Stunde'],
       ['a6', 'Reinigung & Pflege von Ledersitzen', 41.65, 'Stück'], ['a7', '2 Stufen Keramikversiegelung', 714, 'Stück']].map(([id, name, preis, einheit]) => ({ id, name, preis, einheit }));
-    if (aktion === 'statistik') return ok({ meta: { ausgaben: 312.45, impressionen: 40210, klicks: 812, waehrung: 'EUR' },
-      angebote: { open: { anzahl: 4, summe: 3120.5 }, accepted: { anzahl: 2, summe: 1890 }, rejected: { anzahl: 1, summe: 420 } } });
+    if (aktion === 'statistik') {
+      const tag = n => ymd(new Date(Date.now() - n * 864e5));
+      return ok({ meta: { ausgaben: 312.45, impressionen: 40210, klicks: 812, waehrung: 'EUR' },
+        angebote: [{ k: 'K-d6', s: 'accepted', b: 1890, d: tag(9) }, { k: 'K-d5', s: 'open', b: 1240.5, d: tag(3) }, { k: 'K-x', s: 'open', b: 1880, d: tag(2) }, { k: 'K-y', s: 'rejected', b: 420, d: tag(5) }],
+        rechnungen: [{ nr: 'RE260470', k: 'K-d6', name: 'Dennis Krämer', s: 'paid', b: 1890, o: 0, d: tag(4), u: tag(1) },
+          { nr: 'RE260468', k: 'K-x', name: 'Autohaus Muster', s: 'paid', b: 642.6, o: 0, d: tag(6), u: tag(3) },
+          { nr: 'RE260471', k: 'K-z', name: 'Petra Lang', s: 'open', b: 380, o: 380, d: tag(1), u: tag(1) },
+          { nr: 'RE260455', k: 'K-w', name: 'Firma Wolf', s: 'overdue', b: 512.4, o: 512.4, d: tag(20), u: tag(20) }] });
+    }
     if (aktion === 'lexArtikel') return ok({ firma: 'JD Brüder (Demo)', artikel: artikel.map(a => ({ ...a, aus: (window.DEMO_AUS || []).includes(a.id) })) });
     if (aktion === 'angebotPdf') return ok({ nr: l.angebot.nr, daten: btoa('%PDF-1.4 Demo'), angebot: l.angebot });
     if (aktion === 'angebotMail') {

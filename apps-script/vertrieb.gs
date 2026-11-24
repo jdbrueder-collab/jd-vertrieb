@@ -806,8 +806,9 @@ function angebotPdf(d) {
 }
 
 // ---------- Statistik ----------
-// Für den Tab Statistik: was Meta im Zeitraum gekostet hat und welche Angebote in Lexware geschrieben wurden.
-// Leads, Quellen und Status zählt die App selbst. Beide Teile dürfen einzeln scheitern, dann steht dort der Grund.
+// Für den Tab Statistik: was Meta im Zeitraum gekostet hat, welche Angebote und Rechnungen es in Lexware gibt.
+// Leads, Quellen, Status und ROAS rechnet die App selbst, sie weiß, welche Lexware-Kunden über Meta kamen.
+// Jeder Teil darf einzeln scheitern, dann steht dort der Grund.
 // Meta braucht die Skripteigenschaft META_TOKEN (Zugriffsschlüssel mit ads_read), das Werbekonto sucht das Skript selbst.
 const META_API = 'https://graph.facebook.com/v24.0';
 function statistik(d) {
@@ -816,8 +817,9 @@ function statistik(d) {
   const da = CacheService.getScriptCache().get(key);
   if (da) return JSON.parse(da);
   const teil = (f) => { try { return f(); } catch (e) { return { fehler: e.message }; } };
-  const r = { meta: teil(() => metaZahlen(von, bis)), angebote: teil(() => angebotsWerte(von, bis)) };
-  if (!r.meta.fehler && !r.angebote.fehler) CacheService.getScriptCache().put(key, JSON.stringify(r), 300);   // 5 Minuten
+  const r = { meta: teil(() => metaZahlen(von, bis)), angebote: teil(() => angebotsListe(von, bis)), rechnungen: teil(() => rechnungsListe(von, bis)) };
+  const json = JSON.stringify(r);
+  if (!r.meta.fehler && !r.angebote.fehler && !r.rechnungen.fehler && json.length < 95000) CacheService.getScriptCache().put(key, json, 300);   // 5 Minuten
   return r;
 }
 
@@ -846,16 +848,30 @@ function metaZahlen(von, bis) {
   return { ausgaben: Number(z.spend) || 0, impressionen: Number(z.impressions) || 0, klicks: Number(z.clicks) || 0, waehrung: z.account_currency || 'EUR' };
 }
 
-// Alle fertigen Angebote in Lexware mit Angebotsdatum im Zeitraum, auch die nicht über die App geschriebenen
-function angebotsWerte(von, bis) {
-  const je = { open: { anzahl: 0, summe: 0 }, accepted: { anzahl: 0, summe: 0 }, rejected: { anzahl: 0, summe: 0 } };
-  for (let seite = 0; seite < 20; seite++) {
-    const j = lex('/v1/voucherlist?voucherType=quotation&voucherStatus=open,accepted,rejected' + (von ? '&voucherDateFrom=' + von : '')
-      + '&voucherDateTo=' + bis + '&size=250&page=' + seite);
-    (j.content || []).forEach((v) => { const x = je[v.voucherStatus]; if (x) { x.anzahl++; x.summe += Number(v.totalAmount) || 0; } });
+// Belege aus der Lexware-Belegliste, alle Seiten
+function lexBelege(filter, zeile) {
+  const aus = [];
+  for (let seite = 0; seite < 40; seite++) {
+    const j = lex('/v1/voucherlist?' + filter + '&size=250&page=' + seite);
+    (j.content || []).forEach((v) => aus.push(zeile(v)));
     if (j.last !== false) break;
   }
-  Object.values(je).forEach((x) => { x.summe = Math.round(x.summe * 100) / 100; });
-  return je;
+  return aus;
+}
+const tagAus = (x) => String(x || '').slice(0, 10);
+
+// Fertige Angebote mit Angebotsdatum im Zeitraum (brutto), auch die nicht über die App geschriebenen
+function angebotsListe(von, bis) {
+  return lexBelege('voucherType=quotation&voucherStatus=open,accepted,rejected' + (von ? '&voucherDateFrom=' + von : '') + '&voucherDateTo=' + bis,
+    (v) => ({ k: v.contactId || '', s: v.voucherStatus, b: Number(v.totalAmount) || 0, d: tagAus(v.voucherDate) }));
 }
 
+// Rechnungen: im Zeitraum geschrieben, dazu ältere, die im Zeitraum bezahlt wurden. Bezahlt am = Tag, an dem Lexware
+// die Zahlung zugeordnet hat (updatedDate), das genaue Buchungsdatum bräuchte eine Anfrage je Rechnung.
+function rechnungsListe(von, bis) {
+  const alle = {}, zeile = (v) => ({ id: v.id, nr: v.voucherNumber || '', k: v.contactId || '', name: v.contactName || '', s: v.voucherStatus,
+    b: Number(v.totalAmount) || 0, o: Number(v.openAmount) || 0, d: tagAus(v.voucherDate), u: tagAus(v.updatedDate) });
+  lexBelege('voucherType=invoice&voucherStatus=open,paid,paidoff,voided' + (von ? '&voucherDateFrom=' + von : '') + '&voucherDateTo=' + bis, zeile).forEach((r) => { alle[r.id] = r; });
+  if (von) lexBelege('voucherType=invoice&voucherStatus=paid&updatedDateFrom=' + von, zeile).forEach((r) => { alle[r.id] = r; });
+  return Object.values(alle).map((r) => { delete r.id; return r; });
+}
