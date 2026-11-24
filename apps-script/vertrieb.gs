@@ -817,9 +817,12 @@ function statistik(d) {
   const da = CacheService.getScriptCache().get(key);
   if (da) return JSON.parse(da);
   const teil = (f) => { try { return f(); } catch (e) { return { fehler: e.message }; } };
-  const r = { meta: teil(() => metaZahlen(von, bis)), angebote: teil(() => angebotsListe(von, bis)), rechnungen: teil(() => rechnungsListe(von, bis)) };
+  const fz = { offen: 0 };
+  const r = { meta: teil(() => metaZahlen(von, bis)), angebote: teil(() => nurFahrzeug(angebotsListe(von, bis), 'quotations', fz)),
+    rechnungen: teil(() => nurFahrzeug(rechnungsListe(von, bis), 'invoices', fz)) };
+  if (fz.offen) r.pruefen = fz.offen;   // nicht alle Belege in der Zeit geschafft, beim nächsten Mal weiter
   const json = JSON.stringify(r);
-  if (!r.meta.fehler && !r.angebote.fehler && !r.rechnungen.fehler && json.length < 95000) CacheService.getScriptCache().put(key, json, 300);   // 5 Minuten
+  if (!r.meta.fehler && !r.angebote.fehler && !r.rechnungen.fehler && !r.pruefen && json.length < 95000) CacheService.getScriptCache().put(key, json, 300);   // 5 Minuten
   return r;
 }
 
@@ -863,7 +866,7 @@ const tagAus = (x) => String(x || '').slice(0, 10);
 // Fertige Angebote mit Angebotsdatum im Zeitraum (brutto), auch die nicht über die App geschriebenen
 function angebotsListe(von, bis) {
   return lexBelege('voucherType=quotation&voucherStatus=open,accepted,rejected' + (von ? '&voucherDateFrom=' + von : '') + '&voucherDateTo=' + bis,
-    (v) => ({ k: v.contactId || '', name: v.contactName || '', s: v.voucherStatus, b: Number(v.totalAmount) || 0, d: tagAus(v.voucherDate) }));
+    (v) => ({ id: v.id, k: v.contactId || '', name: v.contactName || '', s: v.voucherStatus, b: Number(v.totalAmount) || 0, d: tagAus(v.voucherDate) }));
 }
 
 // Rechnungen: im Zeitraum geschrieben, dazu ältere, die im Zeitraum bezahlt wurden. Bezahlt am = Tag, an dem Lexware
@@ -873,5 +876,36 @@ function rechnungsListe(von, bis) {
     b: Number(v.totalAmount) || 0, o: Number(v.openAmount) || 0, d: tagAus(v.voucherDate), u: tagAus(v.updatedDate) });
   lexBelege('voucherType=invoice&voucherStatus=open,paid,paidoff,voided' + (von ? '&voucherDateFrom=' + von : '') + '&voucherDateTo=' + bis, zeile).forEach((r) => { alle[r.id] = r; });
   if (von) lexBelege('voucherType=invoice&voucherStatus=paid&updatedDateFrom=' + von, zeile).forEach((r) => { alle[r.id] = r; });
-  return Object.values(alle).map((r) => { delete r.id; return r; });
+  return Object.values(alle);
+}
+
+// In der App zählt nur das Fahrzeug-Geschäft: Aufbereitung, Veredelung, Folie, Trockeneis und was dazugehört.
+// Bauleistungen (Meta Trennwandanlagen, Überdachung, Fliesen …) nicht. Kunden aus der App (LEX_…) zählen immer,
+// Meta Trennwandanlagen nie, alle anderen nach den Positionen des Belegs. Die Entscheidung je Beleg merkt sich das Skript
+// in FZ_BELEGE (erste 8 Zeichen der Beleg-id → 1 oder 0), so braucht jeder Beleg nur einmal eine Lexware-Anfrage.
+// Geprüft am 24.11.2026 an allen Belegen 2026: Werkstatt-Teile (Bremsen, Filter, Öl, Reifen) und Bau zählen so nicht mit.
+const FAHRZEUG = /aufb?ereit|veredel|trockeneis|folier|folie|ppf|suntek|polier|politur|keramik|interieur|exterieur|wäsche|leder|alcantara|sternenhimmel|lackaufb|lackkorr|steinschlag|scheinschlag|unterboden|hol\W*und\W*bring|imprägnier/i;
+const BAU = /bauleistung|baustelle|gipskarton|spachtel|fliese|abdichtung|kabine|trennwand|überdach|tapete|anstrich|trockenbau|nivel|fußleiste|vinyl|venyl|estrich|abdeckarbeit/i;   // schlägt FAHRZEUG
+function nurFahrzeug(belege, art, fz) {
+  const alle = props().getProperties(), merk = JSON.parse(alle.FZ_BELEGE || '{}'), start = Date.now();
+  const appKunden = new Set(Object.keys(alle).filter((k) => k.startsWith('LEX_')).map((k) => alle[k]));
+  let neu = false;
+  const aus = belege.filter((b) => {
+    if (appKunden.has(b.k)) return true;
+    if (/meta\s*trennwand/i.test(b.name)) return false;
+    const k = b.id.slice(0, 8);
+    if (!(k in merk)) {
+      if (Date.now() - start > 20000) { fz.offen++; return false; }
+      const namen = (lex('/v1/' + art + '/' + b.id).lineItems || []).map((p) => p.name || '');
+      merk[k] = namen.some((n) => FAHRZEUG.test(n)) && !namen.some((n) => BAU.test(n)) ? 1 : 0;
+      neu = true;
+    }
+    return merk[k] === 1;
+  });
+  if (neu) {   // eine Skripteigenschaft fasst rund 9 KB, die ältesten Einträge fallen dann raus
+    let j = JSON.stringify(merk);
+    if (j.length > 8500) { Object.keys(merk).slice(0, Math.ceil((j.length - 7500) / 13)).forEach((k) => delete merk[k]); j = JSON.stringify(merk); }
+    props().setProperty('FZ_BELEGE', j);
+  }
+  return aus.map((b) => { delete b.id; return b; });
 }
