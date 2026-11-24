@@ -60,6 +60,19 @@ Ist `LEXWARE_API_KEY` hinterlegt (Skripteigenschaft im Google-Skript), passiert 
 - **Artikel im Angebot:** Unter *Setup → Lexware → Artikel im Angebot* legt ihr fest, welche Lexware-Artikel in der App erscheinen (z. B. ohne Bauleistungen). Gilt fürs ganze Team (`ARTIKEL_AUS`), neue Artikel sind erst mal sichtbar.
 - Pakete und Preise pflegt ihr in Lexware unter *Artikel*. *Setup → Lexware → Verbindung* zeigt, ob der Schlüssel funktioniert.
 
+## Statistik
+
+Eigener Tab in der Menüleiste (Kreis-Symbol). Oben der Zeitraum: *7 Tage*, *Monat* (seit dem 1.), *Vormonat*, *Alles*. Darunter:
+- **Kennzahlen:** Ausgaben bei Meta, Leads (davon Meta und Website), Kosten pro Lead (Ausgaben geteilt durch die Meta-Leads aus den Tabellen), Angebotswert.
+- **Woher die Leads kommen:** Kreisdiagramm Instagram, Facebook, Website.
+- **Was aus den Leads wurde:** Tabelle je Status, getrennt nach Meta und Website.
+- **Vom Lead zum Auftrag:** Leads, Erreicht (nicht mehr Neu und nicht „Nicht erreicht“), Termin (Terminiert und Auftrag), Auftrag, jeweils mit Anteil.
+- **Leads pro Tag** (bis 31 Tage, sonst pro Woche), nach Quelle gestapelt.
+- **Was Meta kostet:** Ausgaben, pro Lead, pro Termin, pro Auftrag, pro Klick, Impressionen.
+- **Angebote in Lexware:** alle fertigen Angebote mit Angebotsdatum im Zeitraum (brutto, auch nicht über die App geschriebene) als Kreisdiagramm angenommen, offen, abgelehnt.
+
+Leads und Status zählt die App selbst. Ausgaben und Angebote holt das Skript (Aktion `statistik`, 5 Minuten zwischengespeichert, Aktualisieren holt neu). **Meta verbinden:** In den Skripteigenschaften `META_TOKEN` eintragen, einen Meta-Zugriffsschlüssel mit dem Recht `ads_read` (am besten von einem Systemnutzer im Business Manager, der läuft nicht ab). Das Werbekonto sucht das Skript selbst und merkt es sich in `META_KONTO` (dort lässt es sich auch von Hand setzen, z. B. `act_123…`). Läuft der Schlüssel ab, sagt der Tab das.
+
 ## WhatsApp von der JD-Brüder-Nummer
 
 Alle WhatsApp-Knöpfe öffnen `whatsapp://` statt `wa.me`. Auf Davids iPhone (privates WhatsApp und WhatsApp Business mit der JD-Brüder-Nummer) geht nur so WhatsApp Business auf, `wa.me` nimmt dort das private WhatsApp (getestet mit `wa-test.html`). Welche App iOS für `whatsapp://` nimmt, legt das iPhone selbst fest; ändert sich das nach einem Update, die Testseite nochmal durchtippen.

@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '31';
+const VERSION = '32';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -61,6 +61,7 @@ async function api(aktion, daten = {}) {
 function uebernimm(j) { leads = j.leads; tabellen = j.tabellen || []; heimUrl = j.heimUrl || ''; texte = { ...TEXT_STANDARD, ...j.texte }; skriptAlt = !DEMO && !j.texte; lexAn = DEMO || !!j.lexware; stand = new Date(); }
 async function laden(still) {
   if (!angemeldet() || laedt) return;
+  if (!still) for (const k in statCache) delete statCache[k];   // Aktualisieren holt auch Meta und Lexware neu
   laedt = true; $('.roundbtn')?.classList.add('spin');
   try {
     const j = await api('liste');
@@ -85,7 +86,7 @@ function render() {
   if (!an) return renderLogin();
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   requestAnimationFrame(moveTabInd);
-  ({ anrufen: renderAnrufen, alle: renderAlle, setup: renderSetup })[tab]();
+  ({ anrufen: renderAnrufen, alle: renderAlle, statistik: renderStatistik, setup: renderSetup })[tab]();
   const th = $('#thema');   // offenes Setup-Fenster mitziehen, außer man tippt gerade darin
   if (th && !th.querySelector('input:focus')) th.outerHTML = themaHtml(th.dataset.id);
   if (DEMO) view.insertAdjacentHTML('afterbegin', '<div class="demo">Demo mit Beispiel-Leads. Noch nicht mit dem Sheet verbunden.</div>');
@@ -199,6 +200,106 @@ function setupThemen() {
     ],
   ];
 }
+// ---------- Tab: Statistik ----------
+// Leads, Quellen und Status zählt die App selbst. Meta-Ausgaben und Angebotswerte (Lexware) holt das Skript.
+let statZeit = 'monat';
+const statCache = {};   // "von_bis" → { laedt, meta, angebote, fehler }
+const ZEITEN = { tage7: '7 Tage', monat: 'Monat', vormonat: 'Vormonat', alles: 'Alles' };
+const QUELLEN = { Instagram: 'var(--pink)', Facebook: 'var(--blue)', Website: 'var(--accent)', Sonstige: 'var(--grau)' };
+const quelleVon = l => QUELLEN[l.quelle] && l.quelle !== 'Sonstige' ? l.quelle : 'Sonstige';
+const istMeta = l => l.quelle === 'Instagram' || l.quelle === 'Facebook';
+const euro0 = n => Math.round(Number(n) || 0).toLocaleString('de-DE') + ' €';
+const proz = (a, b) => b ? Math.round(a / b * 100) + ' %' : '–';
+function statZeitraum(z) {
+  const d = new Date(), j = d.getFullYear(), m = d.getMonth();
+  if (z === 'tage7') return { von: ymd(new Date(j, m, d.getDate() - 6)), bis: ymd(d) };
+  if (z === 'monat') return { von: ymd(new Date(j, m, 1)), bis: ymd(d) };
+  if (z === 'vormonat') return { von: ymd(new Date(j, m - 1, 1)), bis: ymd(new Date(j, m, 0)) };
+  return { von: '', bis: ymd(d) };
+}
+// Kreisdiagramm: Teile mit 2 Punkten Luft dazwischen, in der Mitte die Summe. Die Zahlen stehen immer auch in der Legende.
+function torte(teile, mitte, unter, breit) {   // breit: Legende braucht Platz (Beträge), auf dem Handy dann unter dem Kreis
+  const summe = teile.reduce((s, t) => s + t.wert, 0), luft = teile.filter(t => t.wert).length > 1 ? 1.2 : 0;
+  let ab = 25;   // oben anfangen
+  const ringe = teile.filter(t => t.wert).map(t => {
+    const anteil = t.wert / summe * 100, r = `<circle cx="21" cy="21" r="15.915" fill="none" stroke="${t.farbe}" stroke-width="5.5" stroke-dasharray="${Math.max(anteil - luft, .5)} ${100 - Math.max(anteil - luft, .5)}" stroke-dashoffset="${ab}"><title>${esc(t.name)}: ${esc(t.text)} (${proz(t.wert, summe)})</title></circle>`;
+    ab -= anteil; return r;
+  }).join('');
+  return `<div class="torte"><svg viewBox="0 0 42 42" role="img" aria-label="${esc(teile.map(t => `${t.name} ${t.text}`).join(', '))}">
+      <circle cx="21" cy="21" r="15.915" fill="none" stroke="var(--line)" stroke-width="5.5"/>${ringe}
+      <text x="21" y="${unter ? 21 : 22.6}" text-anchor="middle" class="t-mitte" style="font-size:${mitte.length > 5 ? 4.6 : 6.5}px">${esc(mitte)}</text>${unter ? `<text x="21" y="26" text-anchor="middle" class="t-unter">${esc(unter)}</text>` : ''}</svg>
+    <ul class="legende"${breit ? ' style="min-width:220px"' : ''}>${teile.map(t => `<li><span class="dot" style="--c:${t.farbe}"></span><span>${esc(t.name)}</span><b>${esc(t.text)}</b><span class="muted">${proz(t.wert, summe)}</span></li>`).join('')}</ul></div>`;
+}
+// Leads pro Tag (bis 31 Tage) oder pro Woche, gestapelt nach Quelle
+function saeulen(ls, von, bis) {
+  if (!ls.length) return '';
+  const start = new Date((von || ls.map(l => String(l.datum).slice(0, 10)).sort()[0]) + 'T12:00'), ende = new Date(bis + 'T12:00');
+  const tage = Math.round((ende - start) / 864e5) + 1, woche = tage > 31;
+  const schluessel = d => { const x = new Date(d); if (woche) x.setDate(x.getDate() - (x.getDay() + 6) % 7); return ymd(x); };
+  const toepfe = new Map();
+  for (let d = new Date(start); d <= ende; d.setDate(d.getDate() + 1)) toepfe.set(schluessel(d), {});
+  ls.forEach(l => { const k = schluessel(new Date(String(l.datum).slice(0, 10) + 'T12:00')), t = toepfe.get(k); if (t) t[quelleVon(l)] = (t[quelleVon(l)] || 0) + 1; });
+  const liste = [...toepfe].slice(-26), max = Math.max(1, ...liste.map(([, t]) => Object.values(t).reduce((a, b) => a + b, 0)));
+  const name = k => woche ? 'Woche ab ' + datumKurz(k) : datumKurz(k);
+  return `<div class="card"><p class="kartenkopf"><b>Leads pro ${woche ? 'Woche' : 'Tag'}</b><span class="muted">höchstens ${max}</span></p>
+    <div class="saeulen">${liste.map(([k, t]) => { const n = Object.values(t).reduce((a, b) => a + b, 0);
+      return `<span title="${esc(name(k))}: ${n} ${n === 1 ? 'Lead' : 'Leads'}" aria-label="${esc(name(k))}: ${n}">${Object.keys(QUELLEN).filter(q => t[q]).map(q => `<i style="height:${t[q] / max * 100}%;background:${QUELLEN[q]}"></i>`).join('')}</span>`; }).join('')}</div>
+    <p class="achse muted"><span>${esc(datumKurz(liste[0][0]))}</span><span>${esc(datumKurz(liste[liste.length - 1][0]))}</span></p></div>`;
+}
+function renderStatistik() {
+  const { von, bis } = statZeitraum(statZeit), key = von + '_' + bis;
+  const ls = leads.filter(l => { const t = String(l.datum).slice(0, 10); return (!von || t >= von) && t <= bis; });
+  let s = statCache[key];
+  if (!s) {
+    s = statCache[key] = { laedt: true };
+    api('statistik', { von, bis }).then(j => Object.assign(s, j)).catch(e => { s.fehler = e.message; })
+      .finally(() => { s.laedt = false; if (tab === 'statistik') render(); });
+  }
+  const meta = ls.filter(istMeta), web = ls.filter(l => l.quelle === 'Website');
+  const termin = l => l.status === 'Terminiert' || l.status === 'Auftrag', erreicht = l => !['Neu', 'Nicht erreicht'].includes(l.status);
+  const m = s.meta && !s.meta.fehler ? s.meta : null, ausgaben = m ? m.ausgaben : null;
+  const a = s.angebote && !s.angebote.fehler ? s.angebote : null, wert = a ? a.open.summe + a.accepted.summe + a.rejected.summe : null;
+  const geld = (x, fehlt) => x == null ? (s.laedt ? '…' : fehlt || '–') : euro(x);
+  const pro = (n) => ausgaben != null && n ? euro(ausgaben / n) : '–';
+  const hinweis = (teil, was) => !s.laedt && (s.fehler || s[teil]?.fehler) ? `<p class="hint">${esc(was)}: ${esc(s.fehler || s[teil].fehler)}</p>` : '';
+  const zeile = (name, farbe, f) => `<tr><td>${farbe ? `<span class="dot" style="--c:${farbe}"></span>` : ''}${esc(name)}</td><td>${meta.filter(f).length}</td><td>${web.filter(f).length}</td><td><b>${ls.filter(f).length}</b></td></tr>`;
+  const weg = [['Leads', ls.length], ['Erreicht', ls.filter(erreicht).length], ['Termin', ls.filter(termin).length], ['Auftrag', ls.filter(l => l.status === 'Auftrag').length]];
+  view.innerHTML = kopf('Statistik') + `
+    <div class="zeitwahl" role="group" aria-label="Zeitraum">${Object.entries(ZEITEN).map(([k, n]) => `<button class="pill${k === statZeit ? ' sel' : ''}" aria-pressed="${k === statZeit}" onclick="statZeit='${k}';render()">${n}</button>`).join('')}</div>
+    <div class="kpis">
+      <div class="tile"><b>${geld(ausgaben, 'fehlt')}</b><span>Ausgaben Meta</span></div>
+      <div class="tile"><b>${ls.length}</b><span>Leads · Meta ${meta.length}, Web ${web.length}</span></div>
+      <div class="tile"><b>${ausgaben == null ? geld(null) : pro(meta.length)}</b><span>Kosten pro Lead</span></div>
+      <div class="tile"><b>${geld(wert)}</b><span>Angebotswert${a ? ` · ${a.open.anzahl + a.accepted.anzahl + a.rejected.anzahl} Stück` : ''}</span></div>
+    </div>
+    ${hinweis('meta', 'Meta')}${hinweis('angebote', 'Lexware')}
+    ${!ls.length ? '<div class="card empty">In diesem Zeitraum sind keine Leads gekommen.</div>' : `
+    <div class="card"><p class="kartenkopf"><b>Woher die Leads kommen</b></p>
+      ${torte(Object.entries(QUELLEN).map(([q, farbe]) => ({ name: q, farbe, wert: ls.filter(l => quelleVon(l) === q).length })).filter(t => t.wert || t.name !== 'Sonstige').map(t => ({ ...t, text: String(t.wert) })), String(ls.length), ls.length === 1 ? 'Lead' : 'Leads')}</div>
+    <div class="card"><p class="kartenkopf"><b>Was aus den Leads wurde</b></p>
+      <table class="stab"><thead><tr><th>Status</th><th>Meta</th><th>Web</th><th>Gesamt</th></tr></thead><tbody>
+        ${Object.entries(STATUS).map(([st, farbe]) => zeile(st, farbe, l => l.status === st)).join('')}
+      </tbody><tfoot>${zeile('Alle', '', () => true)}</tfoot></table></div>
+    <div class="card"><p class="kartenkopf"><b>Vom Lead zum Auftrag</b></p>
+      <div class="weg">${weg.map(([n, z]) => `<div><span>${n}</span><span class="spur"><i style="width:${ls.length ? z / ls.length * 100 : 0}%"></i></span><b>${z}</b><span class="muted">${proz(z, ls.length)}</span></div>`).join('')}</div>
+      <p class="hint" style="margin:var(--gap) 0 0">Erreicht heißt: nicht mehr Neu und nicht „Nicht erreicht“. Termin zählt Terminiert und Auftrag.</p></div>
+    ${saeulen(ls, von, bis)}`}
+    <div class="card"><p class="kartenkopf"><b>Was Meta kostet</b>${m ? `<span class="muted">${m.klicks.toLocaleString('de-DE')} Klicks</span>` : ''}</p>
+      ${m ? `<table class="stab"><tbody>
+        <tr><td>Ausgaben</td><td><b>${euro(ausgaben)}</b></td></tr>
+        <tr><td>pro Lead (${meta.length})</td><td>${pro(meta.length)}</td></tr>
+        <tr><td>pro Termin (${meta.filter(termin).length})</td><td>${pro(meta.filter(termin).length)}</td></tr>
+        <tr><td>pro Auftrag (${meta.filter(l => l.status === 'Auftrag').length})</td><td>${pro(meta.filter(l => l.status === 'Auftrag').length)}</td></tr>
+        <tr><td>pro Klick</td><td>${pro(m.klicks)}</td></tr>
+        <tr><td>Gesehen (Impressionen)</td><td>${m.impressionen.toLocaleString('de-DE')}</td></tr></tbody></table>`
+        : `<p class="muted" style="margin:0">${s.laedt ? 'Lädt…' : 'Meta ist noch nicht verbunden. Dafür braucht das Google-Skript einen Meta-Zugriffsschlüssel (META_TOKEN).'}</p>`}</div>
+    <div class="card"><p class="kartenkopf"><b>Angebote in Lexware</b><span class="muted">brutto</span></p>
+      ${a ? (wert ? torte([['Angenommen', 'var(--ok)', a.accepted], ['Offen', 'var(--blue)', a.open], ['Abgelehnt', 'var(--grau)', a.rejected]].map(([name, farbe, x]) => ({ name: `${name} (${x.anzahl})`, farbe, wert: x.summe, text: euro0(x.summe) })), euro0(wert), 'gesamt', true)
+        : '<p class="muted" style="margin:0">In diesem Zeitraum gibt es keine Angebote.</p>')
+        : `<p class="muted" style="margin:0">${s.laedt ? 'Lädt…' : 'Nicht verfügbar.'}</p>`}
+      <p class="hint" style="margin:var(--gap) 0 0">Alle fertigen Angebote mit Angebotsdatum im Zeitraum, auch die nicht über die App geschriebenen.</p></div>`;
+}
+
 function renderSetup() {
   view.innerHTML = `<div class="phead"><h1>Setup</h1></div>
     ${setupThemen().map((g, i) => `${i === 2 ? '<div class="label">Nachrichten an Kunden</div>' : ''}<div class="group">${g.map(([id, icon, titel, sub]) => `<button class="row thema" onclick="thema('${id}')">
@@ -943,9 +1044,9 @@ function demoApi(aktion, d) {
     anzeige: 'Referenzautos (Video)', quelle: 'Instagram', tabelle: 'Leads November 2026', status, notizen, ki, naechster });
   window.DEMO_LEADS ||= [
     lead('d1', 12, 'Lena Becker', 1, 'Referenzauto', 'VW Golf 8', 'Neu'),
-    lead('d2', 95, 'Markus Schmidt', 2, 'Aufbereitung', 'BMW X5', 'Neu'),
+    { ...lead('d2', 95, 'Markus Schmidt', 2, 'Aufbereitung', 'BMW X5', 'Neu'), quelle: 'Facebook' },
     lead('d3', 1500, 'Sabine Klein', 3, 'Referenzauto', 'Audi A4 Avant', 'Zurückrufen', '19.11.26 10:12 David: Will den Preis mit ihrem Mann besprechen und meldet sich. Heute nochmal anrufen.', 'Interessiert an einer Aufbereitung als Referenzauto, will den Preis erst mit ihrem Mann besprechen.\nNächster Schritt: Heute zurückrufen und den Termin festmachen.', heute()),
-    lead('d4', 2900, 'Tobias Wagner', 4, 'Aufbereitung', 'Mercedes C-Klasse', 'Nicht erreicht', '18.11.26 16:40 Jonathan: Mailbox, nichts drauf gesprochen.'),
+    { ...lead('d4', 2900, 'Tobias Wagner', 4, 'Aufbereitung', 'Mercedes C-Klasse', 'Nicht erreicht', '18.11.26 16:40 Jonathan: Mailbox, nichts drauf gesprochen.'), quelle: 'Website', anzeige: '' },
     lead('d5', 4400, 'Julia Hoffmann', 5, 'Referenzauto', 'VW T6 Multivan', 'Terminiert', '17.11.26 09:05 David: Termin fest, bringt den Bus am Montag um 8 Uhr.', 'Will den T6 als Referenzauto aufbereiten lassen. Termin steht.\nNächster Schritt: Montag 8 Uhr Annahme vorbereiten.', ymd(new Date(Date.now() + 3 * 864e5))),
     lead('d6', 9000, 'Dennis Krämer', 6, 'Anderes', 'Porsche 911', 'Auftrag', '13.11.26 14:20 Jonathan: Komplettpaket gebucht, sehr zufrieden.'),
   ];
@@ -962,6 +1063,8 @@ function demoApi(aktion, d) {
     const artikel = [['a1', 'Auftragspauschale', 58, 'Stück'], ['a2', 'Einfache Handwäsche Mittel & Oberklasse', 101.15, 'Stück'],
       ['a3', 'Interieur Aufbereitung', 226.1, 'Stück'], ['a4', 'Lackaufbereitung One-Step-Politur', 380.8, 'Aufwand'], ['a5', 'Polierarbeiten', 65.45, 'Stunde'],
       ['a6', 'Reinigung & Pflege von Ledersitzen', 41.65, 'Stück'], ['a7', '2 Stufen Keramikversiegelung', 714, 'Stück']].map(([id, name, preis, einheit]) => ({ id, name, preis, einheit }));
+    if (aktion === 'statistik') return ok({ meta: { ausgaben: 312.45, impressionen: 40210, klicks: 812, waehrung: 'EUR' },
+      angebote: { open: { anzahl: 4, summe: 3120.5 }, accepted: { anzahl: 2, summe: 1890 }, rejected: { anzahl: 1, summe: 420 } } });
     if (aktion === 'lexArtikel') return ok({ firma: 'JD Brüder (Demo)', artikel: artikel.map(a => ({ ...a, aus: (window.DEMO_AUS || []).includes(a.id) })) });
     if (aktion === 'angebotPdf') return ok({ nr: l.angebot.nr, daten: btoa('%PDF-1.4 Demo'), angebot: l.angebot });
     if (aktion === 'angebotMail') {

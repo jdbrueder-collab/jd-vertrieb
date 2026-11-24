@@ -44,7 +44,7 @@ function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
     if (d.aktion !== 'anfrage') pruefe(d.pw); // nur das Anfrageformular der Website kommt ohne Passwort
-    const aktion = { anfrage, liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos, vorlage, lexArtikel, lexDaten, lexAngebot, gesendet, angebotMail, angebotPdf, artikelAus, nachziehen }[d.aktion];
+    const aktion = { anfrage, liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos, vorlage, lexArtikel, lexDaten, lexAngebot, gesendet, angebotMail, angebotPdf, artikelAus, nachziehen, statistik }[d.aktion];
     if (!aktion) throw fehler('aktion', 'Unbekannte Aktion.');
     out = Object.assign({ ok: true }, aktion(d));
   } catch (err) {
@@ -804,3 +804,58 @@ function angebotPdf(d) {
   }
   return { nr: a.nr, daten: Utilities.base64Encode(blob.getBytes()), angebot: a };
 }
+
+// ---------- Statistik ----------
+// Für den Tab Statistik: was Meta im Zeitraum gekostet hat und welche Angebote in Lexware geschrieben wurden.
+// Leads, Quellen und Status zählt die App selbst. Beide Teile dürfen einzeln scheitern, dann steht dort der Grund.
+// Meta braucht die Skripteigenschaft META_TOKEN (Zugriffsschlüssel mit ads_read), das Werbekonto sucht das Skript selbst.
+const META_API = 'https://graph.facebook.com/v24.0';
+function statistik(d) {
+  const tag = (x) => (/^\d{4}-\d\d-\d\d$/.test(x || '') ? x : '');
+  const von = tag(d.von), bis = tag(d.bis) || berlin(new Date(), 'yyyy-MM-dd'), key = 'STAT_' + von + '_' + bis;
+  const da = CacheService.getScriptCache().get(key);
+  if (da) return JSON.parse(da);
+  const teil = (f) => { try { return f(); } catch (e) { return { fehler: e.message }; } };
+  const r = { meta: teil(() => metaZahlen(von, bis)), angebote: teil(() => angebotsWerte(von, bis)) };
+  if (!r.meta.fehler && !r.angebote.fehler) CacheService.getScriptCache().put(key, JSON.stringify(r), 300);   // 5 Minuten
+  return r;
+}
+
+function meta(pfad) {
+  const token = String(props().getProperty('META_TOKEN') || '').trim();
+  if (!token) throw fehler('meta', 'Meta ist noch nicht verbunden (META_TOKEN fehlt in den Skripteigenschaften).');
+  const res = UrlFetchApp.fetch(META_API + pfad + (pfad.includes('?') ? '&' : '?') + 'access_token=' + encodeURIComponent(token), { muteHttpExceptions: true });
+  let j = {};
+  try { j = JSON.parse(res.getContentText() || '{}'); } catch (e) { }
+  if (res.getResponseCode() < 300 && !j.error) return j;
+  const e = j.error || {};
+  if (e.code === 190) throw fehler('meta', 'Der Meta-Schlüssel ist abgelaufen oder ungültig. Trag einen neuen META_TOKEN ein.');
+  throw fehler('meta', 'Meta meldet: ' + (e.message || 'Fehler ' + res.getResponseCode()));
+}
+
+function metaZahlen(von, bis) {
+  let konto = props().getProperty('META_KONTO');
+  if (!konto) {   // das erste aktive Werbekonto, das der Schlüssel sieht
+    const k = meta('/me/adaccounts?fields=id,name,account_status&limit=50').data || [];
+    konto = ((k.find((x) => x.account_status === 1) || k[0]) || {}).id;
+    if (!konto) throw fehler('meta', 'Der Meta-Schlüssel sieht kein Werbekonto.');
+    props().setProperty('META_KONTO', konto);
+  }
+  const zeit = von ? 'time_range=' + encodeURIComponent(JSON.stringify({ since: von, until: bis })) : 'date_preset=maximum';
+  const z = (meta('/' + konto + '/insights?fields=spend,impressions,clicks,account_currency&' + zeit).data || [])[0] || {};
+  return { ausgaben: Number(z.spend) || 0, impressionen: Number(z.impressions) || 0, klicks: Number(z.clicks) || 0, waehrung: z.account_currency || 'EUR' };
+}
+
+// Alle fertigen Angebote in Lexware mit Angebotsdatum im Zeitraum, auch die nicht über die App geschriebenen
+function angebotsWerte(von, bis) {
+  const je = { open: { anzahl: 0, summe: 0 }, accepted: { anzahl: 0, summe: 0 }, rejected: { anzahl: 0, summe: 0 } };
+  for (let seite = 0; seite < 20; seite++) {
+    const j = lex('/v1/voucherlist?voucherType=quotation&voucherStatus=open,accepted,rejected' + (von ? '&voucherDateFrom=' + von : '')
+      + '&voucherDateTo=' + bis + '&size=250&page=' + seite);
+    (j.content || []).forEach((v) => { const x = je[v.voucherStatus]; if (x) { x.anzahl++; x.summe += Number(v.totalAmount) || 0; } });
+    if (j.last !== false) break;
+  }
+  Object.values(je).forEach((x) => { x.summe = Math.round(x.summe * 100) / 100; });
+  return je;
+}
+

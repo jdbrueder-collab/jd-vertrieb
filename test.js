@@ -71,14 +71,15 @@ function welt(props) {
       if (c && o.method === 'put') Object.assign(c, body);
       j = c ? JSON.parse(JSON.stringify(c)) : null;
     }
-    else if (pfad.startsWith('/v1/voucherlist?')) j = { content: (lexware.angebote || []).filter((v) => pfad.includes('contactId=' + v.contactId)) };
+    else if (pfad.startsWith('/v1/voucherlist?')) j = { last: true, content: (lexware.angebote || []).filter((v) => !pfad.includes('contactId=') || pfad.includes('contactId=' + v.contactId)) };
     else if (pfad === '/v1/quotations?finalize=true') j = { id: 'Q-1', version: 1 };
     else if (pfad === '/v1/quotations/Q-1') j = Object.assign({ id: 'Q-1', version: 1, voucherNumber: 'AG0049', voucherStatus: 'open', totalPrice: { totalGrossAmount: 409.56 } }, lexware.angebot);   // angebot: in Lexware bearbeitet
     else if (pfad === '/v1/quotations/Q-1/file') return { getResponseCode: () => 200, getBlob: () => ({ bytes: '%PDF', getBytes: () => [37, 80, 68, 70], setName(n) { this.name = n; return this; } }) };
     return { getResponseCode: () => j ? 200 : 404, getContentText: () => JSON.stringify(j || {}) };
   };
 
-  let claudeBody = null;
+  let claudeBody = null, metaAntwort = null;
+  const metaUrls = [];
   const ordner = (name) => {
     const o = { id: 'O' + drive.ordner.length, name, dateien: [], freigabe: null, getId: () => o.id, getUrl: () => 'https://drive/' + o.id,
       createFolder: (n) => ordner(n), setSharing: (a, b) => { o.freigabe = a + '/' + b; },
@@ -117,6 +118,12 @@ function welt(props) {
     ContentService: { createTextOutput: (t) => ({ t, setMimeType() { return this; } }), MimeType: { JSON: 'json' } },
     UrlFetchApp: { fetch: (url, o) => {
       if (url.startsWith('https://api.lexware.io')) return lexAntwort(url, o);
+      if (url.startsWith('https://graph.facebook.com')) {   // Meta: Werbekonten und Insights
+        metaUrls.push(url);
+        const j = metaAntwort ? metaAntwort(url) : url.includes('/me/adaccounts') ? { data: [{ id: 'act_1', account_status: 2 }, { id: 'act_7', account_status: 1 }] }
+          : { data: [{ spend: '312.45', impressions: '40210', clicks: '812', account_currency: 'EUR' }] };
+        return { getResponseCode: () => (j.error ? 400 : 200), getContentText: () => JSON.stringify(j) };
+      }
       if (url.includes('workers.dev')) {
         pushes.push({ url, headers: o.headers, body: JSON.parse(o.payload) });
         return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ weg: drive.weg }) };
@@ -129,7 +136,7 @@ function welt(props) {
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(__dirname + '/apps-script/vertrieb.gs', 'utf8'), ctx);
   const post = (d) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(d) } }).t);
-  return { post, ctx, lexware, mails, props, pushes, drive, aendern: () => drive.geaendert++, lead: lead.rows, heim: heim.rows, web: web.rows, feedback, cache, claude: () => claudeBody };
+  return { post, ctx, lexware, metaUrls, metaFalsch: (f) => { metaAntwort = f; }, mails, props, pushes, drive, aendern: () => drive.geaendert++, lead: lead.rows, heim: heim.rows, web: web.rows, feedback, cache, claude: () => claudeBody };
 }
 
 const w = welt({ TEAM_PASSWORT: 'geheim', ANTHROPIC_API_KEY: 'sk-ant-api-test', PUSH_GEHEIMNIS: 'push-geheim' });
@@ -512,6 +519,32 @@ w.ctx.meldeNeueLeads();
 assert.ok(w.pushes.some((p) => /neue Leads|neuer Lead/i.test(p.body.title) && /Eva Web/.test(p.body.title + p.body.body)), JSON.stringify(w.pushes.at(-1).body));
 w.cache.anfragen = '30';
 assert.strictEqual(w.post(eva).code, 'viel');             // höchstens 30 Anfragen pro Stunde
+
+// Statistik: Meta-Ausgaben und Angebotswerte aus Lexware, jedes Teil darf einzeln scheitern
+w.lexware.angebote = [
+  { id: 'S1', contactId: 'K-1', voucherStatus: 'open', totalAmount: 100.10 },
+  { id: 'S2', contactId: 'K-2', voucherStatus: 'accepted', totalAmount: 250 },
+  { id: 'S3', contactId: 'K-3', voucherStatus: 'accepted', totalAmount: 49.95 },
+  { id: 'S4', contactId: 'K-4', voucherStatus: 'rejected', totalAmount: 80 }];
+w.lexware.anfragen.length = 0;
+r = w.post({ aktion: 'statistik', pw, von: '2026-11-01', bis: '2026-11-24' });
+assert.ok(r.ok, r.fehler);
+assert.match(r.meta.fehler, /META_TOKEN fehlt/);
+assert.strictEqual(JSON.stringify(r.angebote), '{"open":{"anzahl":1,"summe":100.1},"accepted":{"anzahl":2,"summe":299.95},"rejected":{"anzahl":1,"summe":80}}');
+assert.match(w.lexware.anfragen[0].pfad, /voucherType=quotation&voucherStatus=open,accepted,rejected&voucherDateFrom=2026-11-01&voucherDateTo=2026-11-24&size=250&page=0$/);
+w.props.META_TOKEN = 'meta-schluessel';
+r = w.post({ aktion: 'statistik', pw, von: '2026-11-01', bis: '2026-11-24' });
+assert.strictEqual(JSON.stringify(r.meta), '{"ausgaben":312.45,"impressionen":40210,"klicks":812,"waehrung":"EUR"}');
+assert.strictEqual(w.props.META_KONTO, 'act_7');   // das aktive Konto
+assert.match(w.metaUrls.pop(), /^https:\/\/graph\.facebook\.com\/v24\.0\/act_7\/insights\?fields=spend,impressions,clicks,account_currency&time_range=%7B%22since%22%3A%222026-11-01%22%2C%22until%22%3A%222026-11-24%22%7D&access_token=meta-schluessel$/);
+const anzahlMeta = w.metaUrls.length;
+assert.strictEqual(w.post({ aktion: 'statistik', pw, von: '2026-11-01', bis: '2026-11-24' }).meta.ausgaben, 312.45);
+assert.strictEqual(w.metaUrls.length, anzahlMeta);   // 5 Minuten aus dem Cache
+w.post({ aktion: 'statistik', pw, von: '', bis: '2026-11-24' });
+assert.match(w.metaUrls.pop(), /date_preset=maximum/);   // Alles
+w.metaFalsch(() => ({ error: { code: 190, message: 'Session has expired' } }));
+assert.match(w.post({ aktion: 'statistik', pw, von: '2026-10-01', bis: '2026-10-31' }).meta.fehler, /abgelaufen oder ungültig/);
+w.metaFalsch(null);
 
 // Sperre nach 10 Fehlversuchen
 for (let i = 0; i < 10; i++) w.post({ aktion: 'liste', pw: 'falsch' });
