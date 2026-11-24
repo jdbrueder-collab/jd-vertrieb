@@ -863,7 +863,7 @@ const tagAus = (x) => String(x || '').slice(0, 10);
 // Fertige Angebote mit Angebotsdatum im Zeitraum (brutto), auch die nicht über die App geschriebenen
 function angebotsListe(von, bis) {
   return lexBelege('voucherType=quotation&voucherStatus=open,accepted,rejected' + (von ? '&voucherDateFrom=' + von : '') + '&voucherDateTo=' + bis,
-    (v) => ({ k: v.contactId || '', s: v.voucherStatus, b: Number(v.totalAmount) || 0, d: tagAus(v.voucherDate) }));
+    (v) => ({ k: v.contactId || '', name: v.contactName || '', s: v.voucherStatus, b: Number(v.totalAmount) || 0, d: tagAus(v.voucherDate) }));
 }
 
 // Rechnungen: im Zeitraum geschrieben, dazu ältere, die im Zeitraum bezahlt wurden. Bezahlt am = Tag, an dem Lexware

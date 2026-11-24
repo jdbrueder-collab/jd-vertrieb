@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '33';
+const VERSION = '34';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -203,9 +203,12 @@ function setupThemen() {
 // ---------- Tab: Statistik ----------
 // Leads, Quellen und Status zählt die App selbst. Meta-Ausgaben, Angebote und Rechnungen (Lexware) holt das Skript.
 // ROAS rechnet die App, weil nur sie weiß, welche Lexware-Kunden über einen Meta-Lead kamen (l.lex).
-let statZeit = 'monat';
+let statZeit = 'monat', statBereich = 'aufbereitung';
 const statCache = {};   // "von_bis" → { laedt, meta, angebote, rechnungen, fehler }
 const ZEITEN = { tage7: '7 Tage', monat: 'Monat', vormonat: 'Vormonat', alles: 'Alles' };
+// Lexware hat zwei Geschäfte: Aufbereitung und die Bauleistungen für Meta Trennwandanlagen (eigener Kunde, Name in zwei Schreibweisen)
+const BEREICHE = { aufbereitung: 'Aufbereitung', trennwand: 'Meta Trennwand', alle: 'Beide' };
+const bereichVon = x => /meta\s*trennwand/i.test(x.name || '') ? 'trennwand' : 'aufbereitung';
 const QUELLEN = { Instagram: 'var(--pink)', Facebook: 'var(--blue)', Website: 'var(--accent)', Sonstige: 'var(--grau)' };
 const quelleVon = l => QUELLEN[l.quelle] && l.quelle !== 'Sonstige' ? l.quelle : 'Sonstige';
 const istMeta = l => l.quelle === 'Instagram' || l.quelle === 'Facebook';
@@ -233,7 +236,7 @@ function torte(teile, mitte, unter, breit) {   // breit: Legende braucht Platz (
     <ul class="legende"${breit ? ' style="min-width:220px"' : ''}>${teile.map(t => `<li><span class="dot" style="--c:${t.farbe}"></span><span>${esc(t.name)}</span><b>${esc(t.text)}</b><span class="muted">${proz(t.wert, summe)}</span></li>`).join('')}</ul></div>`;
 }
 // Säulen pro Tag (bis 31 Tage) oder pro Woche, gestapelt nach Gruppe. eintraege: [{ t: 'yyyy-mm-dd', g: Gruppe, w: Wert }]
-function saeulen(titel, eintraege, von, bis, farben, zahl) {
+function saeulen(titel, eintraege, von, bis, farben, zahl, zusatz = '') {
   if (!eintraege.length) return '';
   const start = new Date((von || eintraege.map(e => e.t).sort()[0]) + 'T12:00'), ende = new Date(bis + 'T12:00');
   const woche = Math.round((ende - start) / 864e5) + 1 > 31;
@@ -243,7 +246,7 @@ function saeulen(titel, eintraege, von, bis, farben, zahl) {
   eintraege.forEach(e => { const t = toepfe.get(schluessel(new Date(e.t + 'T12:00'))); if (t) t[e.g] = (t[e.g] || 0) + e.w; });
   const liste = [...toepfe].slice(-26), summe = t => Object.values(t).reduce((a, b) => a + b, 0), max = Math.max(...liste.map(([, t]) => summe(t))) || 1;
   const name = k => woche ? 'Woche ab ' + datumKurz(k) : datumKurz(k);
-  return `<div class="card"><p class="kartenkopf"><b>${titel} pro ${woche ? 'Woche' : 'Tag'}</b><span class="muted">höchstens ${zahl(max)}</span></p>
+  return `<div class="card"><p class="kartenkopf"><b>${titel} pro ${woche ? 'Woche' : 'Tag'}${zusatz}</b><span class="muted">höchstens ${zahl(max)}</span></p>
     <div class="saeulen">${liste.map(([k, t]) => `<span title="${esc(name(k))}: ${esc(zahl(summe(t)))}" aria-label="${esc(name(k))}: ${esc(zahl(summe(t)))}">${Object.keys(farben).filter(g => t[g]).map(g => `<i style="height:${t[g] / max * 100}%;background:${farben[g]}"></i>`).join('')}</span>`).join('')}</div>
     <p class="achse muted"><span>${esc(datumKurz(liste[0][0]))}</span><span>${esc(datumKurz(liste[liste.length - 1][0]))}</span></p></div>`;
 }
@@ -259,7 +262,9 @@ function renderStatistik() {
   const meta = ls.filter(istMeta), web = ls.filter(l => l.quelle === 'Website');
   const termin = l => l.status === 'Terminiert' || l.status === 'Auftrag', erreicht = l => !['Neu', 'Nicht erreicht'].includes(l.status);
   const m = s.meta && !s.meta.fehler ? s.meta : null, ausgaben = m ? m.ausgaben : null;
-  const ang = Array.isArray(s.angebote) ? s.angebote : null, re = Array.isArray(s.rechnungen) ? s.rechnungen : null;
+  const angAlle = Array.isArray(s.angebote) ? s.angebote : null, reAlle = Array.isArray(s.rechnungen) ? s.rechnungen : null;
+  const imBereich = x => statBereich === 'alle' || bereichVon(x) === statBereich, bName = statBereich === 'alle' ? '' : ' · ' + BEREICHE[statBereich];
+  const ang = angAlle && angAlle.filter(imBereich), re = reAlle && reAlle.filter(imBereich);
   const summe = (liste, f = () => true) => liste.filter(f).reduce((x, y) => x + y.b, 0);
   const je = (liste, st) => ({ anzahl: liste.filter(x => x.s === st).length, summe: summe(liste, x => x.s === st) });
   const wert = ang ? summe(ang) : null;
@@ -268,7 +273,8 @@ function renderStatistik() {
   const bezahlt = re ? re.filter(x => x.s === 'paid' && imZeitraum(x.u)).sort((a, b) => b.u.localeCompare(a.u)) : null;
   const metaKunden = new Set(leads.filter(istMeta).map(l => l.lex).filter(Boolean)), vonMeta = x => metaKunden.has(x.k);
   const roas = x => ausgaben && x != null ? (x / ausgaben).toLocaleString('de-DE', { maximumFractionDigits: 1 }) + '×' : '–';
-  const reMeta = geschrieben ? summe(geschrieben, vonMeta) : null;
+  const gAlle = reAlle ? reAlle.filter(x => imZeitraum(x.d) && x.s !== 'voided' && x.s !== 'paidoff') : null, bAlle = reAlle ? reAlle.filter(x => x.s === 'paid' && imZeitraum(x.u)) : null;
+  const reMeta = gAlle ? summe(gAlle, vonMeta) : null;
   const geld = (x, fehlt) => x == null ? (s.laedt ? '…' : fehlt || '–') : euro(x);
   const pro = n => ausgaben != null && n ? euro(ausgaben / n) : '–';
   const leer = text => `<p class="muted" style="margin:0">${s.laedt ? 'Lädt…' : text}</p>`;
@@ -277,6 +283,7 @@ function renderStatistik() {
   const weg = [['Leads', ls.length], ['Erreicht', ls.filter(erreicht).length], ['Termin', ls.filter(termin).length], ['Auftrag', ls.filter(l => l.status === 'Auftrag').length]];
   view.innerHTML = kopf('Statistik') + `
     <div class="zeitwahl" role="group" aria-label="Zeitraum">${Object.entries(ZEITEN).map(([k, n]) => `<button class="pill${k === statZeit ? ' sel' : ''}" aria-pressed="${k === statZeit}" onclick="statZeit='${k}';render()">${n}</button>`).join('')}</div>
+    <div class="zeitwahl" role="group" aria-label="Bereich in Lexware">${Object.entries(BEREICHE).map(([k, n]) => `<button class="pill${k === statBereich ? ' sel' : ''}" aria-pressed="${k === statBereich}" onclick="statBereich='${k}';render()">${n}</button>`).join('')}</div>
     <div class="kpis">
       <div class="tile"><b>${geld(ausgaben, 'fehlt')}</b><span>Ausgaben Meta</span></div>
       <div class="tile"><b>${ls.length}</b><span>Leads · Meta ${meta.length}, Web ${web.length}</span></div>
@@ -299,9 +306,9 @@ function renderStatistik() {
     ${saeulen('Leads', ls.map(l => ({ t: tag10(l), g: quelleVon(l), w: 1 })), von, bis, QUELLEN, String)}`}
     <div class="card"><p class="kartenkopf"><b>ROAS</b><span class="muted">Return on Ad Spend</span></p>
       ${m && ang && re ? `<table class="stab"><thead><tr><th>Aus Meta-Leads</th><th>Betrag</th><th>ROAS</th></tr></thead><tbody>
-        <tr><td>Angebote offen und angenommen</td><td>${euro0(summe(ang, x => vonMeta(x) && x.s !== 'rejected'))}</td><td><b>${roas(summe(ang, x => vonMeta(x) && x.s !== 'rejected'))}</b></td></tr>
+        <tr><td>Angebote offen und angenommen</td><td>${euro0(summe(angAlle, x => vonMeta(x) && x.s !== 'rejected'))}</td><td><b>${roas(summe(angAlle, x => vonMeta(x) && x.s !== 'rejected'))}</b></td></tr>
         <tr><td>Rechnungen geschrieben</td><td>${euro0(reMeta)}</td><td><b>${roas(reMeta)}</b></td></tr>
-        <tr><td>Rechnungen bezahlt</td><td>${euro0(summe(bezahlt, vonMeta))}</td><td><b>${roas(summe(bezahlt, vonMeta))}</b></td></tr></tbody></table>
+        <tr><td>Rechnungen bezahlt</td><td>${euro0(summe(bAlle, vonMeta))}</td><td><b>${roas(summe(bAlle, vonMeta))}</b></td></tr></tbody></table>
         <p class="hint" style="margin:var(--gap) 0 0">ROAS 4× heißt: Aus 1 € Werbung wurden 4 € Umsatz (brutto). Gezählt werden nur Kunden, die über einen Meta-Lead kamen und in Lexware verknüpft sind (${metaKunden.size}). Werbung im Zeitraum: ${euro(ausgaben)}.</p>`
         : leer(m ? 'Lexware ist gerade nicht erreichbar.' : 'Dafür braucht die App die Meta-Ausgaben. Das Google-Skript braucht einen Meta-Zugriffsschlüssel (META_TOKEN).')}</div>
     <div class="card"><p class="kartenkopf"><b>Was Meta kostet</b>${m ? `<span class="muted">${m.klicks.toLocaleString('de-DE')} Klicks</span>` : ''}</p>
@@ -313,15 +320,21 @@ function renderStatistik() {
         <tr><td>pro Klick</td><td>${pro(m.klicks)}</td></tr>
         <tr><td>Gesehen (Impressionen)</td><td>${m.impressionen.toLocaleString('de-DE')}</td></tr></tbody></table>`
         : leer('Meta ist noch nicht verbunden. Dafür braucht das Google-Skript einen Meta-Zugriffsschlüssel (META_TOKEN).')}</div>
-    <div class="card"><p class="kartenkopf"><b>Rechnungen</b><span class="muted">alle Kunden, brutto</span></p>
+    ${reAlle && angAlle ? `<div class="card"><p class="kartenkopf"><b>Umsatz nach Bereich</b><span class="muted">brutto</span></p>
+      <div class="bereiche">${['aufbereitung', 'trennwand'].map(b => { const f = x => bereichVon(x) === b; return `<div><b>${BEREICHE[b]}</b>
+        <span class="muted">Rechnungen</span><span>${euro0(summe(gAlle, f))}</span><span class="muted">Bezahlt</span><span>${euro0(summe(bAlle, f))}</span>
+        <span class="muted">Angebote</span><span>${euro0(summe(angAlle, f))}</span></div>`; }).join('')}</div>
+      <p class="hint" style="margin:var(--gap) 0 0">Zusammen: Rechnungen ${euro0(summe(gAlle))}, bezahlt ${euro0(summe(bAlle))}, Angebote ${euro0(summe(angAlle))}.</p>
+      <p class="hint" style="margin:var(--gap) 0 0">Meta Trennwand: alle Belege an Meta Trennwandanlagen. Aufbereitung: alle anderen Kunden. Bezahlt: im Zeitraum eingegangen.</p></div>` : ''}
+    <div class="card"><p class="kartenkopf"><b>Rechnungen${bName}</b><span class="muted">brutto</span></p>
       ${geschrieben ? (geschrieben.length ? torte([['Bezahlt', 'var(--ok)', 'paid'], ['Offen', 'var(--blue)', 'open'], ['Überfällig', 'var(--near)', 'overdue']].map(([name, farbe, st]) => { const x = je(geschrieben, st); return { name: `${name} (${x.anzahl})`, farbe, wert: x.summe, text: euro0(x.summe) }; }), euro0(summe(geschrieben)), 'geschrieben', true)
         : leer('In diesem Zeitraum gibt es keine Rechnungen.')) : leer('Nicht verfügbar.')}
       <p class="hint" style="margin:var(--gap) 0 0">Rechnungen mit Rechnungsdatum im Zeitraum, ohne stornierte.</p></div>
-    ${bezahlt ? saeulen('Eingenommen', bezahlt.map(x => ({ t: x.u, g: 'Bezahlt', w: x.b })), von, bis, { Bezahlt: 'var(--ok)' }, euro0) : ''}
-    ${bezahlt?.length ? `<div class="card"><p class="kartenkopf"><b>Zuletzt bezahlt</b><span class="muted">${bezahlt.length} · ${euro0(summe(bezahlt))}</span></p>
+    ${bezahlt ? saeulen('Eingenommen', bezahlt.map(x => ({ t: x.u, g: 'Bezahlt', w: x.b })), von, bis, { Bezahlt: 'var(--ok)' }, euro0, bName) : ''}
+    ${bezahlt?.length ? `<div class="card"><p class="kartenkopf"><b>Zuletzt bezahlt${bName}</b><span class="muted">${bezahlt.length} · ${euro0(summe(bezahlt))}</span></p>
       <table class="stab"><tbody>${bezahlt.slice(0, 8).map(x => `<tr><td><span class="muted">${esc(datumKurz(x.u))}</span>${esc(x.name || x.nr)}</td><td><b>${euro(x.b)}</b></td></tr>`).join('')}</tbody></table>
       <p class="hint" style="margin:var(--gap) 0 0">Datum: der Tag, an dem Lexware die Zahlung der Rechnung zugeordnet hat.</p></div>` : ''}
-    <div class="card"><p class="kartenkopf"><b>Angebote in Lexware</b><span class="muted">brutto</span></p>
+    <div class="card"><p class="kartenkopf"><b>Angebote${bName}</b><span class="muted">brutto</span></p>
       ${ang ? (wert ? torte([['Angenommen', 'var(--ok)', 'accepted'], ['Offen', 'var(--blue)', 'open'], ['Abgelehnt', 'var(--grau)', 'rejected']].map(([name, farbe, st]) => { const x = je(ang, st); return { name: `${name} (${x.anzahl})`, farbe, wert: x.summe, text: euro0(x.summe) }; }), euro0(wert), 'gesamt', true)
         : leer('In diesem Zeitraum gibt es keine Angebote.')) : leer('Nicht verfügbar.')}
       <p class="hint" style="margin:var(--gap) 0 0">Alle fertigen Angebote mit Angebotsdatum im Zeitraum, auch die nicht über die App geschriebenen.</p></div>`;
@@ -1097,7 +1110,9 @@ function demoApi(aktion, d) {
         rechnungen: [{ nr: 'RE260470', k: 'K-d6', name: 'Dennis Krämer', s: 'paid', b: 1890, o: 0, d: tag(4), u: tag(1) },
           { nr: 'RE260468', k: 'K-x', name: 'Autohaus Muster', s: 'paid', b: 642.6, o: 0, d: tag(6), u: tag(3) },
           { nr: 'RE260471', k: 'K-z', name: 'Petra Lang', s: 'open', b: 380, o: 380, d: tag(1), u: tag(1) },
-          { nr: 'RE260455', k: 'K-w', name: 'Firma Wolf', s: 'overdue', b: 512.4, o: 512.4, d: tag(20), u: tag(20) }] });
+          { nr: 'RE260455', k: 'K-w', name: 'Firma Wolf', s: 'overdue', b: 512.4, o: 512.4, d: tag(20), u: tag(20) },
+          { nr: 'RE260472', k: 'K-meta', name: 'Meta Trennwandanlagen GmbH & Co. KG', s: 'paid', b: 4880, o: 0, d: tag(5), u: tag(2) },
+          { nr: 'RE260473', k: 'K-meta', name: 'meta Trennwandanlagen GmbH & Co. KG', s: 'open', b: 2310.5, o: 2310.5, d: tag(1), u: tag(1) }] });
     }
     if (aktion === 'lexArtikel') return ok({ firma: 'JD Brüder (Demo)', artikel: artikel.map(a => ({ ...a, aus: (window.DEMO_AUS || []).includes(a.id) })) });
     if (aktion === 'angebotPdf') return ok({ nr: l.angebot.nr, daten: btoa('%PDF-1.4 Demo'), angebot: l.angebot });
