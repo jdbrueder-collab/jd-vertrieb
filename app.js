@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '38';
+const VERSION = '39';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -207,7 +207,7 @@ const ANGEBOT_STATUS = { open: ['offen', 'var(--blue)'], accepted: ['angenommen'
 function angebotsListe() {
   const { von, bis } = statZeitraum(statZeit), s = statCache[von + '_' + bis] || {};
   if (!Array.isArray(s.angebote)) return toast(s.laedt ? 'Die Angebote laden noch.' : 'Die Angebote sind gerade nicht verfügbar.');
-  const liste = [...s.angebote].sort((a, b) => b.d.localeCompare(a.d) || String(b.nr).localeCompare(String(a.nr)));
+  const liste = s.angebote.filter(echt).sort((a, b) => b.d.localeCompare(a.d) || String(b.nr).localeCompare(String(a.nr)));
   sheet(`<div class="sheet-head"><span></span><h2>Angebote</h2><button class="pill" onclick="closeSheet()">Fertig</button></div>
     <p class="sub">${ZEITEN[statZeit]} · ${liste.length} ${liste.length === 1 ? 'Angebot' : 'Angebote'} · ${euro(liste.reduce((x, y) => x + y.b, 0))}</p>
     ${liste.length ? `<div class="group">${liste.map(x => {
@@ -241,6 +241,7 @@ const istMeta = l => l.quelle === 'Instagram' || l.quelle === 'Facebook';
 const euro0 = n => Math.round(Number(n) || 0).toLocaleString('de-DE') + ' €';
 const proz = (a, b) => b ? Math.round(a / b * 100) + ' %' : '–';
 const tag10 = l => String(l.datum).slice(0, 10);
+const echt = x => !/\btest\b/i.test(x.name || '');   // Testkunden und Testleads (z. B. „Test, Dominik“, „Vertrieb, Test JD“) zählen nicht
 function statZeitraum(z) {
   const d = new Date(), j = d.getFullYear(), m = d.getMonth();
   if (z === 'tage7') return { von: ymd(new Date(j, m, d.getDate() - 6)), bis: ymd(d) };
@@ -282,7 +283,7 @@ function saeulen(titel, eintraege, von, bis, farben, zahl, zusatz = '') {
 }
 function renderStatistik() {
   const { von, bis } = statZeitraum(statZeit), key = von + '_' + bis, imZeitraum = t => (!von || t >= von) && t <= bis;
-  const ls = leads.filter(l => imZeitraum(tag10(l)));
+  const ls = leads.filter(l => echt(l) && imZeitraum(tag10(l)));
   let s = statCache[key];
   if (!s) {
     s = statCache[key] = { laedt: true };
@@ -293,7 +294,7 @@ function renderStatistik() {
   const termin = l => l.status === 'Terminiert' || l.status === 'Auftrag', erreicht = l => !['Neu', 'Nicht erreicht'].includes(l.status);
   const m = s.meta && !s.meta.fehler ? s.meta : null, ausgaben = m ? m.ausgaben : null;
   // Angebote und Rechnungen: nur Fahrzeug-Geschäft (Aufbereitung, Veredelung, Folie, Trockeneis), das sortiert das Skript aus
-  const ang = Array.isArray(s.angebote) ? s.angebote : null, re = Array.isArray(s.rechnungen) ? s.rechnungen : null;
+  const ang = Array.isArray(s.angebote) ? s.angebote.filter(echt) : null, re = Array.isArray(s.rechnungen) ? s.rechnungen.filter(echt) : null;
   const summe = (liste, f = () => true) => liste.filter(f).reduce((x, y) => x + y.b, 0);
   const je = (liste, st) => ({ anzahl: liste.filter(x => x.s === st).length, summe: summe(liste, x => x.s === st) });
   const wert = ang ? summe(ang) : null;
@@ -1133,7 +1134,8 @@ function demoApi(aktion, d) {
       const tag = n => ymd(new Date(Date.now() - n * 864e5));
       return ok({ meta: { ausgaben: 312.45, impressionen: 40210, klicks: 812, waehrung: 'EUR' },
         angebote: [{ id: 'q1', nr: 'AG0061', k: 'K-d6', name: 'Dennis Krämer', s: 'accepted', b: 1890, d: tag(9) }, { id: 'q2', nr: 'AG0064', k: 'K-d5', name: 'Julia Hoffmann', s: 'open', b: 1240.5, d: tag(3) },
-          { id: 'q3', nr: 'AG0065', k: 'K-x', name: 'Autohaus Muster', s: 'open', b: 1880, d: tag(2) }, { id: 'q4', nr: 'AG0063', k: 'K-y', name: 'Petra Lang', s: 'rejected', b: 420, d: tag(5) }],
+          { id: 'q3', nr: 'AG0065', k: 'K-x', name: 'Autohaus Muster', s: 'open', b: 1880, d: tag(2) }, { id: 'q4', nr: 'AG0063', k: 'K-y', name: 'Petra Lang', s: 'rejected', b: 420, d: tag(5) },
+          { id: 'q5', nr: 'AG0062', k: 'K-t', name: 'Test, Dominik', s: 'open', b: 595, d: tag(4) }],
         rechnungen: [{ nr: 'RE260470', k: 'K-d6', name: 'Dennis Krämer', s: 'paid', b: 1890, o: 0, d: tag(4), u: tag(1) },
           { nr: 'RE260468', k: 'K-x', name: 'Autohaus Muster', s: 'paid', b: 642.6, o: 0, d: tag(6), u: tag(3) },
           { nr: 'RE260471', k: 'K-z', name: 'Petra Lang', s: 'open', b: 380, o: 380, d: tag(1), u: tag(1) },
