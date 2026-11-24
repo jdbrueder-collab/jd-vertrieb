@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '36';
+const VERSION = '37';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -201,6 +201,23 @@ function setupThemen() {
     ],
   ];
 }
+// Kachel Angebotswert: die Angebote im Zeitraum mit Kunde. Antippen öffnet das Angebot in Lexware (PDF ansehen, teilen),
+// „Lead“ den Kunden hier in der App, wenn er über die App kam.
+const ANGEBOT_STATUS = { open: ['offen', 'var(--blue)'], accepted: ['angenommen', 'var(--ok)'], rejected: ['abgelehnt', 'var(--grau)'] };
+function angebotsListe() {
+  const { von, bis } = statZeitraum(statZeit), s = statCache[von + '_' + bis] || {};
+  if (!Array.isArray(s.angebote)) return toast(s.laedt ? 'Die Angebote laden noch.' : 'Die Angebote sind gerade nicht verfügbar.');
+  const liste = [...s.angebote].sort((a, b) => b.d.localeCompare(a.d) || String(b.nr).localeCompare(String(a.nr)));
+  sheet(`<div class="sheet-head"><span></span><h2>Angebote</h2><button class="pill" onclick="closeSheet()">Fertig</button></div>
+    <p class="sub">${ZEITEN[statZeit]} · ${liste.length} ${liste.length === 1 ? 'Angebot' : 'Angebote'} · ${euro(liste.reduce((x, y) => x + y.b, 0))}</p>
+    ${liste.length ? `<div class="group">${liste.map(x => {
+      const l = leads.find(l => l.lex && l.lex === x.k), [st, farbe] = ANGEBOT_STATUS[x.s] || [x.s, 'var(--grau)'];
+      return `<div class="row angebotzeile2"><a href="${esc(LEX_APP + 'quotations/view/' + x.id)}" target="_blank" rel="noopener"><span class="dot" style="--c:${farbe}"></span>
+        <b>${esc(x.name || 'Ohne Namen')}</b><b class="betrag">${euro(x.b)}</b><span class="muted small">${esc([x.nr, datumKurz(x.d), st].filter(Boolean).join(' · '))}</span></a>
+        ${l ? `<button class="pill sm" onclick="closeSheet();openLead(${js(l.id)})" aria-label="${esc(l.name)} in der App öffnen">Lead</button>` : ''}</div>`;
+    }).join('')}</div>` : '<div class="card empty">In diesem Zeitraum gibt es keine Angebote.</div>'}
+    <p class="hint">Tipp auf ein Angebot: Es öffnet sich in Lexware, dort kannst du es als PDF ansehen und teilen. „Lead“ öffnet den Kunden hier in der App.</p>`);
+}
 async function metaSpeichern(knopf) {
   const t = $('#m-token')?.value.trim();
   if (!t) return toast('Füg erst den Schlüssel ein.');
@@ -295,7 +312,7 @@ function renderStatistik() {
       <div class="tile"><b>${ls.length}</b><span>Leads · Meta ${meta.length}, Web ${web.length}</span></div>
       <div class="tile"><b>${ausgaben == null ? geld(null) : pro(meta.length)}</b><span>Kosten pro Lead</span></div>
       <div class="tile"><b>${s.laedt && !m ? '…' : roas(reMeta)}</b><span>ROAS (Rechnungen)</span></div>
-      <div class="tile"><b>${geld(wert)}</b><span>Angebotswert${ang ? ` · ${ang.length} Stück` : ''}</span></div>
+      <button class="tile" onclick="angebotsListe()" aria-label="Angebote im Zeitraum ansehen"><b>${geld(wert)}</b><span>Angebotswert${ang ? ` · ${ang.length} Stück` : ''} ›</span></button>
       <div class="tile"><b>${geld(bezahlt && summe(bezahlt))}</b><span>Eingenommen</span></div>
     </div>
     ${hinweis('meta', 'Meta')}${hinweis('angebote', 'Lexware Angebote')}${hinweis('rechnungen', 'Lexware Rechnungen')}
@@ -1111,7 +1128,8 @@ function demoApi(aktion, d) {
     if (aktion === 'statistik') {
       const tag = n => ymd(new Date(Date.now() - n * 864e5));
       return ok({ meta: { ausgaben: 312.45, impressionen: 40210, klicks: 812, waehrung: 'EUR' },
-        angebote: [{ k: 'K-d6', s: 'accepted', b: 1890, d: tag(9) }, { k: 'K-d5', s: 'open', b: 1240.5, d: tag(3) }, { k: 'K-x', s: 'open', b: 1880, d: tag(2) }, { k: 'K-y', s: 'rejected', b: 420, d: tag(5) }],
+        angebote: [{ id: 'q1', nr: 'AG0061', k: 'K-d6', name: 'Dennis Krämer', s: 'accepted', b: 1890, d: tag(9) }, { id: 'q2', nr: 'AG0064', k: 'K-d5', name: 'Julia Hoffmann', s: 'open', b: 1240.5, d: tag(3) },
+          { id: 'q3', nr: 'AG0065', k: 'K-x', name: 'Autohaus Muster', s: 'open', b: 1880, d: tag(2) }, { id: 'q4', nr: 'AG0063', k: 'K-y', name: 'Petra Lang', s: 'rejected', b: 420, d: tag(5) }],
         rechnungen: [{ nr: 'RE260470', k: 'K-d6', name: 'Dennis Krämer', s: 'paid', b: 1890, o: 0, d: tag(4), u: tag(1) },
           { nr: 'RE260468', k: 'K-x', name: 'Autohaus Muster', s: 'paid', b: 642.6, o: 0, d: tag(6), u: tag(3) },
           { nr: 'RE260471', k: 'K-z', name: 'Petra Lang', s: 'open', b: 380, o: 380, d: tag(1), u: tag(1) },

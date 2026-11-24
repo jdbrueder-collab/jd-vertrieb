@@ -871,7 +871,7 @@ const tagAus = (x) => String(x || '').slice(0, 10);
 // Fertige Angebote mit Angebotsdatum im Zeitraum (brutto), auch die nicht über die App geschriebenen
 function angebotsListe(von, bis) {
   return lexBelege('voucherType=quotation&voucherStatus=open,accepted,rejected' + (von ? '&voucherDateFrom=' + von : '') + '&voucherDateTo=' + bis,
-    (v) => ({ id: v.id, k: v.contactId || '', name: v.contactName || '', s: v.voucherStatus, b: Number(v.totalAmount) || 0, d: tagAus(v.voucherDate) }));
+    (v) => ({ id: v.id, nr: v.voucherNumber || '', k: v.contactId || '', name: v.contactName || '', s: v.voucherStatus, b: Number(v.totalAmount) || 0, d: tagAus(v.voucherDate) }));
 }
 
 // Rechnungen: im Zeitraum geschrieben, dazu ältere, die im Zeitraum bezahlt wurden. Bezahlt am = Tag, an dem Lexware
@@ -912,5 +912,5 @@ function nurFahrzeug(belege, art, fz) {
     if (j.length > 8500) { Object.keys(merk).slice(0, Math.ceil((j.length - 7500) / 13)).forEach((k) => delete merk[k]); j = JSON.stringify(merk); }
     props().setProperty('FZ_BELEGE', j);
   }
-  return aus.map((b) => { delete b.id; return b; });
+  return aus;   // mit id, damit die App den Beleg in Lexware öffnen kann
 }

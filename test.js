@@ -538,9 +538,9 @@ w.lexware.anfragen.length = 0;
 r = w.post({ aktion: 'statistik', pw, von: '2026-11-01', bis: '2026-11-24' });
 assert.ok(r.ok, r.fehler);
 assert.match(r.meta.fehler, /META_TOKEN fehlt/);
-assert.strictEqual(JSON.stringify(r.angebote[0]), '{"k":"K-1","name":"","s":"open","b":100.1,"d":"2026-11-03"}');
+assert.strictEqual(JSON.stringify(r.angebote[0]), '{"id":"S1","nr":"","k":"K-1","name":"","s":"open","b":100.1,"d":"2026-11-03"}');
 assert.strictEqual(r.angebote.length, 2);   // S1 (Kunde aus der App) und S4 (Lackaufbereitung)
-assert.strictEqual(JSON.stringify(r.rechnungen[0]), '{"nr":"RE1","k":"K-1","name":"Anna Alt","s":"paid","b":500,"o":0,"d":"2026-11-02","u":"2026-11-10"}');
+assert.strictEqual(JSON.stringify(r.rechnungen[0]), '{"id":"R1","nr":"RE1","k":"K-1","name":"Anna Alt","s":"paid","b":500,"o":0,"d":"2026-11-02","u":"2026-11-10"}');
 assert.strictEqual(r.rechnungen.map((x) => x.nr).join(), 'RE1,RE2');   // ohne Überdachung und Meta Trennwand; RE1 kommt zweimal, zählt einmal
 assert.strictEqual(w.props.FZ_BELEGE, '{"S4-quote":1,"R2-rechn":1,"R3-rechn":0}');   // Meta Trennwand und App-Kunden ohne Anfrage
 const belege = w.lexware.anfragen.map((x) => x.pfad);
