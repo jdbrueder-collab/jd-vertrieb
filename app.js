@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '35';
+const VERSION = '36';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -40,7 +40,7 @@ const TEXT_STANDARD = {
 let texte = { ...TEXT_STANDARD }, skriptAlt = false;   // skriptAlt: Google-Skript ohne „texte“, kann nur den Nicht-erreicht-Text
 // Lexware: Angebot und Kundendaten (nur sichtbar, wenn im Google-Skript ein Schlüssel hinterlegt ist)
 const LEX_APP = 'https://app.lexware.de/permalink/';
-let lexAn = false, lexArtikelCache = null, angebot = null;   // angebot: gerade offene Angebotsseite
+let lexAn = false, metaAn = false, lexArtikelCache = null, angebot = null;   // angebot: gerade offene Angebotsseite
 // E-Mail und Adresse je Lead (aus Lexware oder gerade eingetippt), Speichern mit kurzer Pause; PDF des letzten Angebots fertig zum Teilen
 const kundeCache = {}, kundeUhr = {}, kundeStand = {}, pdfCache = {};   // kundeStand: zuletzt aus Lexware geladen oder dorthin gespeichert
 const waFrage = {};          // Leads, bei denen gerade die Frage „Jetzt per WhatsApp schreiben?“ steht
@@ -58,7 +58,7 @@ async function api(aktion, daten = {}) {
   if (!j.ok) throw Object.assign(new Error(j.fehler || 'Fehler'), { code: j.code });
   return j;
 }
-function uebernimm(j) { leads = j.leads; tabellen = j.tabellen || []; heimUrl = j.heimUrl || ''; texte = { ...TEXT_STANDARD, ...j.texte }; skriptAlt = !DEMO && !j.texte; lexAn = DEMO || !!j.lexware; stand = new Date(); }
+function uebernimm(j) { leads = j.leads; tabellen = j.tabellen || []; heimUrl = j.heimUrl || ''; texte = { ...TEXT_STANDARD, ...j.texte }; skriptAlt = !DEMO && !j.texte; lexAn = DEMO || !!j.lexware; metaAn = DEMO || !!j.meta; stand = new Date(); }
 async function laden(still) {
   if (!angemeldet() || laedt) return;
   if (!still) for (const k in statCache) delete statCache[k];   // Aktualisieren holt auch Meta und Lexware neu
@@ -192,6 +192,7 @@ function setupThemen() {
     [
       ['tabellen', '📊', 'Lead-Tabellen', klemmt ? `<span style="color:var(--minus)">${klemmt === 1 ? 'Eine Tabelle klemmt' : klemmt + ' Tabellen klemmen'}</span>` : `${tabellen.length} verbunden · neue Kampagne verbinden`],
       ['lexware', '🧾', 'Lexware', lexAn ? 'Artikel im Angebot, Kunden, Verbindung' : 'Nicht verbunden'],
+      ['meta', '📣', 'Meta-Werbung', metaAn ? 'Verbunden · Ausgaben in der Statistik' : 'Nicht verbunden'],
     ],
     Object.entries(NACHRICHTEN).map(([k, n]) => [k, n.icon, n.titel, n.sub]),
     [
@@ -199,6 +200,17 @@ function setupThemen() {
       ['app', '📲', 'App', 'Startbildschirm, Benachrichtigungen · Version ' + VERSION],
     ],
   ];
+}
+async function metaSpeichern(knopf) {
+  const t = $('#m-token')?.value.trim();
+  if (!t) return toast('Füg erst den Schlüssel ein.');
+  knopf.disabled = true; knopf.textContent = 'Prüft…';
+  try {
+    const j = await api('metaVerbinden', { token: t });
+    metaAn = true; for (const k in statCache) delete statCache[k];
+    $('#m-token').value = ''; toast(`Meta verbunden${j.konto ? ': ' + j.konto : ''}`); render();
+  } catch (e) { toast(e.message); }
+  knopf.disabled = false; knopf.textContent = 'Prüfen und speichern';
 }
 // ---------- Tab: Statistik ----------
 // Leads, Quellen und Status zählt die App selbst. Meta-Ausgaben, Angebote und Rechnungen (Lexware) holt das Skript.
@@ -304,7 +316,7 @@ function renderStatistik() {
         <tr><td>Rechnungen geschrieben</td><td>${euro0(reMeta)}</td><td><b>${roas(reMeta)}</b></td></tr>
         <tr><td>Rechnungen bezahlt</td><td>${euro0(summe(bezahlt, vonMeta))}</td><td><b>${roas(summe(bezahlt, vonMeta))}</b></td></tr></tbody></table>
         <p class="hint" style="margin:var(--gap) 0 0">ROAS 4× heißt: Aus 1 € Werbung wurden 4 € Umsatz (brutto). Gezählt werden nur Kunden, die über einen Meta-Lead kamen und in Lexware verknüpft sind (${metaKunden.size}). Werbung im Zeitraum: ${euro(ausgaben)}.</p>`
-        : leer(m ? 'Lexware ist gerade nicht erreichbar.' : 'Dafür braucht die App die Meta-Ausgaben. Das Google-Skript braucht einen Meta-Zugriffsschlüssel (META_TOKEN).')}</div>
+        : leer(m ? 'Lexware ist gerade nicht erreichbar.' : 'Dafür braucht die App die Meta-Ausgaben. Meta verbinden: Setup → Meta-Werbung.')}</div>
     <div class="card"><p class="kartenkopf"><b>Was Meta kostet</b>${m ? `<span class="muted">${m.klicks.toLocaleString('de-DE')} Klicks</span>` : ''}</p>
       ${m ? `<table class="stab"><tbody>
         <tr><td>Ausgaben</td><td><b>${euro(ausgaben)}</b></td></tr>
@@ -313,7 +325,7 @@ function renderStatistik() {
         <tr><td>pro Auftrag (${meta.filter(l => l.status === 'Auftrag').length})</td><td>${pro(meta.filter(l => l.status === 'Auftrag').length)}</td></tr>
         <tr><td>pro Klick</td><td>${pro(m.klicks)}</td></tr>
         <tr><td>Gesehen (Impressionen)</td><td>${m.impressionen.toLocaleString('de-DE')}</td></tr></tbody></table>`
-        : leer('Meta ist noch nicht verbunden. Dafür braucht das Google-Skript einen Meta-Zugriffsschlüssel (META_TOKEN).')}</div>
+        : leer('Meta ist noch nicht verbunden. Unter Setup → Meta-Werbung den Zugriffsschlüssel einfügen.')}</div>
     <div class="card"><p class="kartenkopf"><b>Rechnungen</b><span class="muted">brutto</span></p>
       ${geschrieben ? (geschrieben.length ? torte([['Bezahlt', 'var(--ok)', 'paid'], ['Offen', 'var(--blue)', 'open'], ['Überfällig', 'var(--near)', 'overdue']].map(([name, farbe, st]) => { const x = je(geschrieben, st); return { name: `${name} (${x.anzahl})`, farbe, wert: x.summe, text: euro0(x.summe) }; }), euro0(summe(geschrieben)), 'geschrieben', true)
         : leer('In diesem Zeitraum gibt es keine Rechnungen.')) : leer('Nicht verfügbar.')}
@@ -338,7 +350,7 @@ function thema(id) {
   sheet(themaHtml(id));
 }
 function themaHtml(id) {
-  const titel = { du: 'Du', tabellen: 'Lead-Tabellen', lexware: 'Lexware', design: 'Design', app: 'App' }[id];
+  const titel = { du: 'Du', tabellen: 'Lead-Tabellen', lexware: 'Lexware', meta: 'Meta-Werbung', design: 'Design', app: 'App' }[id];
   const inhalt = {
     du: () => `<div class="group"><label class="row"><span>Dein Name</span><input value="${esc(konto.name)}" placeholder="z. B. David" onchange="konto.name=this.value.trim();merke('jdv-konto',konto);toast('Gespeichert');this.blur();render()" autocomplete="given-name"></label></div>
       <p class="hint">Steht bei jeder Notiz dabei, damit ihr wisst, wer telefoniert hat. In den Nachrichten an Kunden wird daraus {Ich}.</p>
@@ -356,6 +368,10 @@ function themaHtml(id) {
       <button class="row" onclick="lexPruefen()"><span>Verbindung</span><span>Prüfen ›</span></button></div>
       <p class="hint">Neue Leads werden automatisch Kunden in Lexware. Die Auswahl der Artikel gilt fürs ganze Team.</p>`
       : '<div class="group"><div class="row"><span>🧾 Lexware</span><span>Nicht verbunden</span></div></div><p class="hint">Der Schlüssel gehört ins Google-Skript (LEXWARE_API_KEY), siehe README.</p>',
+    meta: () => `<div class="group"><div class="row"><span>📣 Werbekonto JD Brüder</span><span>${metaAn ? 'Verbunden' : 'Nicht verbunden'}</span></div>
+      <label class="row"><span>Schlüssel</span><input id="m-token" type="password" placeholder="${metaAn ? 'neuen einfügen' : 'hier einfügen'}" autocomplete="off" autocapitalize="off" spellcheck="false"></label></div>
+      <button class="pill wide sel" onclick="metaSpeichern(this)">Prüfen und speichern</button>
+      <p class="hint">Für die Ausgaben, Kosten pro Lead und den ROAS in der Statistik. Der Schlüssel (Meta-Zugriffsschlüssel mit Leserecht auf die Anzeigen) wird bei Meta geprüft und nur im Google-Skript gespeichert, nicht auf dem Handy.</p>`,
     design: () => `<div class="two">${[['dunkel', '🌙 Dunkel'], ['hell', '☀️ Hell']].map(([k, t]) => `<button class="pill ${lies('jdv-design', 'dunkel') === k ? 'sel' : ''}" aria-pressed="${lies('jdv-design', 'dunkel') === k}" onclick="designSetzen('design', '${k}')">${t}</button>`).join('')}</div>
       <div class="group"><label class="row"><span>✨ Gold im Hintergrund</span><input type="checkbox" switch ${lies('jdv-gold', true) ? 'checked' : ''} onchange="designSetzen('gold', this.checked)"></label></div>
       <p class="hint">Gilt nur für dieses Handy.</p>`,
@@ -1091,6 +1107,7 @@ function demoApi(aktion, d) {
     const artikel = [['a1', 'Auftragspauschale', 58, 'Stück'], ['a2', 'Einfache Handwäsche Mittel & Oberklasse', 101.15, 'Stück'],
       ['a3', 'Interieur Aufbereitung', 226.1, 'Stück'], ['a4', 'Lackaufbereitung One-Step-Politur', 380.8, 'Aufwand'], ['a5', 'Polierarbeiten', 65.45, 'Stunde'],
       ['a6', 'Reinigung & Pflege von Ledersitzen', 41.65, 'Stück'], ['a7', '2 Stufen Keramikversiegelung', 714, 'Stück']].map(([id, name, preis, einheit]) => ({ id, name, preis, einheit }));
+    if (aktion === 'metaVerbinden') return ok({ konto: 'JD Brüder (Demo)' });
     if (aktion === 'statistik') {
       const tag = n => ymd(new Date(Date.now() - n * 864e5));
       return ok({ meta: { ausgaben: 312.45, impressionen: 40210, klicks: 812, waehrung: 'EUR' },

@@ -560,6 +560,18 @@ assert.match(w.metaUrls.pop(), /date_preset=maximum/);   // Alles
 w.metaFalsch(() => ({ error: { code: 190, message: 'Session has expired' } }));
 assert.match(w.post({ aktion: 'statistik', pw, von: '2026-10-01', bis: '2026-10-31' }).meta.fehler, /abgelaufen oder ungültig/);
 w.metaFalsch(null);
+// Meta-Schlüssel über die App: erst prüfen, dann speichern
+assert.strictEqual(w.post({ aktion: 'metaVerbinden', pw, token: 'kurz' }).code, 'meta');
+w.metaFalsch(() => ({ error: { code: 190, message: 'Invalid OAuth access token' } }));
+assert.match(w.post({ aktion: 'metaVerbinden', pw, token: 'EAA' + 'x'.repeat(80) }).fehler, /abgelaufen oder ungültig/);
+assert.strictEqual(w.props.META_TOKEN, 'meta-schluessel');   // alter bleibt
+w.metaFalsch((url) => ({ id: 'act_1240466211369292', name: 'JD Brüder', account_status: 1 }));
+r = w.post({ aktion: 'metaVerbinden', pw, token: ' EAA' + 'y'.repeat(80) + ' ' });
+assert.ok(r.ok, r.fehler); assert.strictEqual(r.konto, 'JD Brüder');
+assert.strictEqual(w.props.META_TOKEN, 'EAA' + 'y'.repeat(80));
+assert.match(w.metaUrls.pop(), /\/v24\.0\/act_1240466211369292\?fields=name,account_status&access_token=EAAy+$/);
+assert.strictEqual(w.post({ aktion: 'liste', pw }).meta, true);
+w.metaFalsch(null);
 
 // Sperre nach 10 Fehlversuchen
 for (let i = 0; i < 10; i++) w.post({ aktion: 'liste', pw: 'falsch' });

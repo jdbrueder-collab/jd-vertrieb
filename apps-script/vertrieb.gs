@@ -44,7 +44,7 @@ function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
     if (d.aktion !== 'anfrage') pruefe(d.pw); // nur das Anfrageformular der Website kommt ohne Passwort
-    const aktion = { anfrage, liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos, vorlage, lexArtikel, lexDaten, lexAngebot, gesendet, angebotMail, angebotPdf, artikelAus, nachziehen, statistik }[d.aktion];
+    const aktion = { anfrage, liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos, vorlage, lexArtikel, lexDaten, lexAngebot, gesendet, angebotMail, angebotPdf, artikelAus, nachziehen, statistik, metaVerbinden }[d.aktion];
     if (!aktion) throw fehler('aktion', 'Unbekannte Aktion.');
     out = Object.assign({ ok: true }, aktion(d));
   } catch (err) {
@@ -194,7 +194,7 @@ function liste() {
     if (k.telefon) Object.assign(l, { telefon: k.telefon, wa: waAus(k.telefon) });
     l.angebot = alle['ANGEBOT_' + l.id] ? JSON.parse(alle['ANGEBOT_' + l.id]) : null;
   });
-  return { lexware: !!alle.LEXWARE_API_KEY, leads, tabellen, heimUrl: SpreadsheetApp.getActiveSpreadsheet().getUrl(),
+  return { lexware: !!alle.LEXWARE_API_KEY, meta: !!alle.META_TOKEN, leads, tabellen, heimUrl: SpreadsheetApp.getActiveSpreadsheet().getUrl(),
     texte: Object.fromEntries(TEXTE.filter((k) => alle[k]).map((k) => [k, alle[k]])) };
 }
 
@@ -827,8 +827,8 @@ function statistik(d) {
   return r;
 }
 
-function meta(pfad) {
-  const token = String(props().getProperty('META_TOKEN') || '').trim();
+function meta(pfad, neu) {   // neu: Schlüssel zum Prüfen, sonst der gespeicherte
+  const token = String(neu || props().getProperty('META_TOKEN') || '').trim();
   if (!token) throw fehler('meta', 'Meta ist noch nicht verbunden (META_TOKEN fehlt in den Skripteigenschaften).');
   const res = UrlFetchApp.fetch(META_API + pfad + (pfad.includes('?') ? '&' : '?') + 'access_token=' + encodeURIComponent(token), { muteHttpExceptions: true });
   let j = {};
@@ -837,6 +837,16 @@ function meta(pfad) {
   const e = j.error || {};
   if (e.code === 190) throw fehler('meta', 'Der Meta-Schlüssel ist abgelaufen oder ungültig. Trag einen neuen META_TOKEN ein.');
   throw fehler('meta', 'Meta meldet: ' + (e.message || 'Fehler ' + res.getResponseCode()));
+}
+
+// Meta-Schlüssel aus dem Setup der App: erst bei Meta prüfen, dann speichern. In der Google-Oberfläche lassen sich
+// keine Skripteigenschaften mehr anlegen, sobald es mehr als 50 sind (die App legt je Kunde welche an).
+function metaVerbinden(d) {
+  const t = String(d.token || '').trim();
+  if (!/^[A-Za-z0-9]{50,}$/.test(t)) throw fehler('meta', 'Das sieht nicht wie ein Meta-Zugriffsschlüssel aus (lange Zeichenfolge, beginnt meist mit EAA).');
+  const j = meta('/' + (props().getProperty('META_KONTO') || META_KONTO_JD) + '?fields=name,account_status', t);
+  props().setProperty('META_TOKEN', t);
+  return { konto: j.name || '' };
 }
 
 function metaZahlen(von, bis) {
