@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '30';
+const VERSION = '31';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
@@ -122,12 +122,13 @@ function relativ(iso) {
 // WhatsApp Business mit der JD-Brüder-Nummer, wa.me nimmt dort das private WhatsApp (getestet 21.11.2026).
 const waLink = (l, text) => `whatsapp://send?${l?.wa ? 'phone=' + l.wa.replace(/\D/g, '') + (text ? '&' : '') : ''}${text ? 'text=' + encodeURIComponent(text) : ''}`;
 const wunsch = l => (l.antworten.find(a => a[0] === 'Interesse') || l.antworten[0] || [])[1] || '';
+const auto = l => (l.antworten.find(a => a[0] === 'Fahrzeug') || [])[1] || '';   // Formularfrage „Fahrzeug“
 // Platzhalter in den Texten an Kunden: {Name} Vorname, {Wunsch} Formularantwort, {Nr} letztes Angebot, {Ich} wer die App nutzt
 const fuelle = (t, l) => t.replaceAll('{Name}', (l.name || '').split(' ')[0]).replaceAll('{Wunsch}', wunsch(l) || 'Fahrzeugaufbereitung')
   .replaceAll('{Nr}', l.angebot?.nr || '').replaceAll('{Ich}', konto.name || 'das Team').replace(/ +,/g, ',');
 const waText = l => fuelle(texte.WA_VORLAGE, l);
 function leadZeile(l) {
-  const info = faellig(l) && l.angebot?.gesendet ? `Angebot ${l.angebot.nr} nachfassen` : wunsch(l) || l.telefon;
+  const info = faellig(l) && l.angebot?.gesendet ? `Angebot ${l.angebot.nr} nachfassen` : auto(l) || wunsch(l) || l.telefon;   // in der Liste das Auto, der Wunsch steht im Lead
   return `<div class="lead">
     <button class="open" onclick="openLead(${js(l.id)})"><span class="dot" style="--c:${STATUS[l.status] || STATUS.Neu}"></span>
       <span class="tt"><b>${esc(l.name || 'Ohne Namen')}</b><span>${esc(info)}</span></span>${wann(l)}</button>
