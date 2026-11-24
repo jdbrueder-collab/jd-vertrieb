@@ -74,7 +74,7 @@ Eigener Tab in der Menüleiste (Kreis-Symbol). Oben der Zeitraum: *7 Tage*, *Mon
 - **Was Meta kostet:** Ausgaben, pro Lead, pro Termin, pro Auftrag, pro Klick, Impressionen.
 - **Angebote in Lexware:** alle fertigen Angebote mit Angebotsdatum im Zeitraum (brutto, auch nicht über die App geschriebene) als Kreisdiagramm angenommen, offen, abgelehnt.
 
-Leads, Status und ROAS rechnet die App selbst. Ausgaben, Angebote und Rechnungen holt das Skript (Aktion `statistik`, 5 Minuten zwischengespeichert, Aktualisieren holt neu). **Meta verbinden:** In den Skripteigenschaften `META_TOKEN` eintragen, einen Meta-Zugriffsschlüssel mit dem Recht `ads_read` (am besten von einem Systemnutzer im Business Manager, der läuft nicht ab). Das Werbekonto sucht das Skript selbst und merkt es sich in `META_KONTO` (dort lässt es sich auch von Hand setzen, z. B. `act_123…`). Läuft der Schlüssel ab, sagt der Tab das.
+Leads, Status und ROAS rechnet die App selbst. Ausgaben, Angebote und Rechnungen holt das Skript (Aktion `statistik`, 5 Minuten zwischengespeichert, Aktualisieren holt neu). **Meta verbinden:** In den Skripteigenschaften `META_TOKEN` eintragen, einen Meta-Zugriffsschlüssel mit dem Recht `ads_read` (am besten von einem Systemnutzer im Business Manager, der läuft nicht ab). Werbekonto ist JD Brüder (`act_1240466211369292`, fest im Skript), der Schlüssel sieht auch Davids privates Konto. Ein anderes Konto ginge über die Skripteigenschaft `META_KONTO`. Läuft der Schlüssel ab, sagt der Tab das.
 
 ## WhatsApp von der JD-Brüder-Nummer
 

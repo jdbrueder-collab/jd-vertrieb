@@ -809,8 +809,9 @@ function angebotPdf(d) {
 // Für den Tab Statistik: was Meta im Zeitraum gekostet hat, welche Angebote und Rechnungen es in Lexware gibt.
 // Leads, Quellen, Status und ROAS rechnet die App selbst, sie weiß, welche Lexware-Kunden über Meta kamen.
 // Jeder Teil darf einzeln scheitern, dann steht dort der Grund.
-// Meta braucht die Skripteigenschaft META_TOKEN (Zugriffsschlüssel mit ads_read), das Werbekonto sucht das Skript selbst.
-const META_API = 'https://graph.facebook.com/v24.0';
+// Meta braucht die Skripteigenschaft META_TOKEN (Zugriffsschlüssel mit ads_read). Werbekonto ist JD Brüder, der Schlüssel
+// sieht auch Davids privates Konto. Ein anderes Konto ginge über die Skripteigenschaft META_KONTO.
+const META_API = 'https://graph.facebook.com/v24.0', META_KONTO_JD = 'act_1240466211369292';
 function statistik(d) {
   const tag = (x) => (/^\d{4}-\d\d-\d\d$/.test(x || '') ? x : '');
   const von = tag(d.von), bis = tag(d.bis) || berlin(new Date(), 'yyyy-MM-dd'), key = 'STAT_' + von + '_' + bis;
@@ -839,13 +840,7 @@ function meta(pfad) {
 }
 
 function metaZahlen(von, bis) {
-  let konto = props().getProperty('META_KONTO');
-  if (!konto) {   // das erste aktive Werbekonto, das der Schlüssel sieht
-    const k = meta('/me/adaccounts?fields=id,name,account_status&limit=50').data || [];
-    konto = ((k.find((x) => x.account_status === 1) || k[0]) || {}).id;
-    if (!konto) throw fehler('meta', 'Der Meta-Schlüssel sieht kein Werbekonto.');
-    props().setProperty('META_KONTO', konto);
-  }
+  const konto = props().getProperty('META_KONTO') || META_KONTO_JD;
   const zeit = von ? 'time_range=' + encodeURIComponent(JSON.stringify({ since: von, until: bis })) : 'date_preset=maximum';
   const z = (meta('/' + konto + '/insights?fields=spend,impressions,clicks,account_currency&' + zeit).data || [])[0] || {};
   return { ausgaben: Number(z.spend) || 0, impressionen: Number(z.impressions) || 0, klicks: Number(z.clicks) || 0, waehrung: z.account_currency || 'EUR' };

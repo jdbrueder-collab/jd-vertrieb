@@ -551,8 +551,7 @@ assert.ok(belege.some((x) => /voucherType=invoice&voucherStatus=paid&updatedDate
 w.props.META_TOKEN = 'meta-schluessel';
 r = w.post({ aktion: 'statistik', pw, von: '2026-11-01', bis: '2026-11-24' });
 assert.strictEqual(JSON.stringify(r.meta), '{"ausgaben":312.45,"impressionen":40210,"klicks":812,"waehrung":"EUR"}');
-assert.strictEqual(w.props.META_KONTO, 'act_7');   // das aktive Konto
-assert.match(w.metaUrls.pop(), /^https:\/\/graph\.facebook\.com\/v24\.0\/act_7\/insights\?fields=spend,impressions,clicks,account_currency&time_range=%7B%22since%22%3A%222026-11-01%22%2C%22until%22%3A%222026-11-24%22%7D&access_token=meta-schluessel$/);
+assert.match(w.metaUrls.pop(), /^https:\/\/graph\.facebook\.com\/v24\.0\/act_1240466211369292\/insights\?fields=spend,impressions,clicks,account_currency&time_range=%7B%22since%22%3A%222026-11-01%22%2C%22until%22%3A%222026-11-24%22%7D&access_token=meta-schluessel$/);
 const anzahlMeta = w.metaUrls.length;
 assert.strictEqual(w.post({ aktion: 'statistik', pw, von: '2026-11-01', bis: '2026-11-24' }).meta.ausgaben, 312.45);
 assert.strictEqual(w.metaUrls.length, anzahlMeta);   // 5 Minuten aus dem Cache
