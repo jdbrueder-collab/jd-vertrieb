@@ -58,7 +58,7 @@ function welt(props) {
     let j = null;
     if (pfad === '/v1/profile') j = { companyName: 'JD Brüder GbR', smallBusiness: false, taxType: 'net' };
     else if (pfad.startsWith('/v1/articles')) j = { content: [
-      { id: 'A2', title: 'Politur', type: 'SERVICE', unitName: 'Pauschal', price: { netPrice: 168.07, grossPrice: 200, leadingPrice: 'GROSS', taxRate: 19 } },
+      { id: 'A2', title: 'Politur', type: 'PRODUCT', unitName: 'Pauschal', price: { netPrice: 168.07, grossPrice: 200, leadingPrice: 'GROSS', taxRate: 19 } },
       { id: 'A1', title: 'Interieur Aufbereitung', type: 'SERVICE', unitName: 'Stück', description: 'Sitze, Teppich, Himmel', price: { netPrice: 190, leadingPrice: 'NET', taxRate: 19 } },
       { id: 'A4', title: 'Auftragspauschale', type: 'PRODUCT', unitName: 'Stück', price: { netPrice: 58, grossPrice: 58, leadingPrice: 'NET', taxRate: 0 } },
       { id: 'A3', title: 'Alt', type: 'PRODUCT', archived: true, price: {} }] };
@@ -292,11 +292,11 @@ assert.strictEqual(annaL.lex, ''); assert.strictEqual(annaL.angebot, null);
 assert.strictEqual(JSON.stringify(benL.kunde), '{"email":"ben@example.de","strasse":"","plz":"","ort":"Puderbach"}');   // aus dem Meta-Formular
 assert.ok(!benL.antworten.some((x) => /ben@|Puderbach/.test(x[1])));   // steht bei den Kundendaten, nicht bei den Antworten
 
-// Artikel: archivierte weg, sortiert, Endpreis (auch wenn nur netto hinterlegt), Profil nur einmal geholt
+// Artikel: nur Produkte (Service ist in Lexware Bau und Kleinkram), archivierte weg, sortiert, Endpreis (auch wenn nur netto hinterlegt), Profil nur einmal geholt
 r = w.post({ aktion: 'lexArtikel', pw });
 assert.ok(r.ok, r.fehler);
 assert.strictEqual(r.firma, 'JD Brüder GbR');
-assert.strictEqual(JSON.stringify(r.artikel.map((a) => [a.name, a.preis])), '[["Auftragspauschale",58],["Interieur Aufbereitung",226.1],["Politur",200]]');
+assert.strictEqual(JSON.stringify(r.artikel.map((a) => [a.name, a.preis])), '[["Auftragspauschale",58],["Politur",200]]');
 assert.strictEqual(w.lexware.anfragen[0].auth, 'Bearer lex-schluessel');
 w.post({ aktion: 'lexArtikel', pw });
 assert.strictEqual(w.lexware.anfragen.filter((x) => x.pfad === '/v1/profile').length, 1);
@@ -448,7 +448,7 @@ assert.match(w.pushes[0].body.body, /Anna Alt-Neumann \(Angebot nachfassen\)/);
 // Artikel ausblenden (z. B. Bauleistungen), gilt fürs ganze Team
 assert.ok(w.post({ aktion: 'artikelAus', pw, aus: ['A2', 'bös<script>'] }).ok);
 assert.strictEqual(w.props.ARTIKEL_AUS, '["A2"]');
-assert.strictEqual(JSON.stringify(w.post({ aktion: 'lexArtikel', pw }).artikel.map((a) => [a.id, a.aus])), '[["A4",false],["A1",false],["A2",true]]');
+assert.strictEqual(JSON.stringify(w.post({ aktion: 'lexArtikel', pw }).artikel.map((a) => [a.id, a.aus])), '[["A4",false],["A2",true]]');
 
 // Dubletten: gleicher Nachname UND gleiche Nummer wird verknüpft, nur gleicher Name nicht
 w.lexware.vorhanden.push({ id: 'K-ALT', version: 4, person: { lastName: 'Frisch' }, phoneNumbers: { mobile: ['0171 3333333'] } });

@@ -553,7 +553,8 @@ const euro = (n) => (Number(n) || 0).toFixed(2).replace('.', ',') + ' €';
 // Artikel für die App, mit Endpreis (so wie der Kunde zahlt)
 function lexArtikel() {
   const p = lexProfil(), aus = new Set(JSON.parse(props().getProperty('ARTIKEL_AUS') || '[]'));
-  const artikel = lexArtikelRoh().map((a) => ({ id: a.id, name: String(a.title || '').trim(), einheit: a.unitName || 'Stück', preis: p.ohneSteuer ? (a.price || {}).netPrice || 0 : lexBrutto(a.price || {}), aus: aus.has(a.id) }));
+  // Nur Produkte: Darunter stehen in Lexware alle Fahrzeug-Leistungen, unter Service Bau und Kleinkram (Stand 25.11.2026)
+  const artikel = lexArtikelRoh().filter((a) => a.type === 'PRODUCT').map((a) => ({ id: a.id, name: String(a.title || '').trim(), einheit: a.unitName || 'Stück', preis: p.ohneSteuer ? (a.price || {}).netPrice || 0 : lexBrutto(a.price || {}), aus: aus.has(a.id) }));
   artikel.sort((a, b) => a.name.localeCompare(b.name, 'de'));
   return { firma: p.firma, artikel };
 }
