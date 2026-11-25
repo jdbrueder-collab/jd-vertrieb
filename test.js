@@ -61,7 +61,9 @@ function welt(props) {
       { id: 'A2', title: 'Politur', type: 'PRODUCT', unitName: 'Pauschal', price: { netPrice: 168.07, grossPrice: 200, leadingPrice: 'GROSS', taxRate: 19 } },
       { id: 'A1', title: 'Interieur Aufbereitung', type: 'SERVICE', unitName: 'Stück', description: 'Sitze, Teppich, Himmel', price: { netPrice: 190, leadingPrice: 'NET', taxRate: 19 } },
       { id: 'A4', title: 'Auftragspauschale', type: 'PRODUCT', unitName: 'Stück', price: { netPrice: 58, grossPrice: 58, leadingPrice: 'NET', taxRate: 0 } },
-      { id: 'A3', title: 'Alt', type: 'PRODUCT', archived: true, price: {} }] };
+      { id: 'A3', title: 'Alt', type: 'PRODUCT', archived: true, price: {} },
+      { id: 'A6', title: 'Mahngebühr', type: 'PRODUCT', price: { netPrice: 5, leadingPrice: 'NET', taxRate: 0 } },
+      { id: 'A7', title: 'Videoproduktion Werbematerial', type: 'PRODUCT', price: { netPrice: 357, leadingPrice: 'NET', taxRate: 0 } }] };
     else if (pfad.startsWith('/v1/contacts?')) j = { content: lexware.vorhanden.filter((c) => c.person.lastName === decodeURIComponent(pfad.split('name=')[1])) };
     else if (pfad === '/v1/contacts' && o.method === 'post') { lexware.kontakt = Object.assign({}, body, { id: 'K-1', version: 1 }); j = { id: 'K-1', version: 1 }; }
     else if (pfad === '/v1/contacts/K-1' && o.method === 'get') j = JSON.parse(JSON.stringify(lexware.kontakt));
@@ -292,7 +294,7 @@ assert.strictEqual(annaL.lex, ''); assert.strictEqual(annaL.angebot, null);
 assert.strictEqual(JSON.stringify(benL.kunde), '{"email":"ben@example.de","strasse":"","plz":"","ort":"Puderbach"}');   // aus dem Meta-Formular
 assert.ok(!benL.antworten.some((x) => /ben@|Puderbach/.test(x[1])));   // steht bei den Kundendaten, nicht bei den Antworten
 
-// Artikel: nur Produkte (Service ist in Lexware Bau und Kleinkram), archivierte weg, sortiert, Endpreis (auch wenn nur netto hinterlegt), Profil nur einmal geholt
+// Artikel: nur Produkte (Service ist in Lexware Bau und Kleinkram), ohne Mahngebühr und Videoproduktion, archivierte weg, sortiert, Endpreis (auch wenn nur netto hinterlegt), Profil nur einmal geholt
 r = w.post({ aktion: 'lexArtikel', pw });
 assert.ok(r.ok, r.fehler);
 assert.strictEqual(r.firma, 'JD Brüder GbR');
