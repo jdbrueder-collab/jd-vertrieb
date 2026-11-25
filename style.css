@@ -234,6 +234,7 @@ body:has(#fbbtn:not([hidden])) .tabs{width:var(--tbw);left:calc(50% - 34px)}
 .blase{width:fit-content;max-width:85%;margin:14px 12px 16px auto;padding:7px 9px 8px;border-radius:10px 2px 10px 10px;background:#005c4b;font-size:16px;line-height:1.35}
 .watext{white-space:pre-wrap;overflow-wrap:anywhere}
 .zeit{float:right;margin:8px 0 -4px 10px;font-size:11px;opacity:.65}.haken{color:#53bdeb}
+.walink{color:#53bdeb;text-decoration:underline;word-break:break-all}html.hell .walink{color:#027eb5}
 .wadok{display:flex;align-items:center;gap:10px;padding:10px;margin:0 0 6px;border-radius:7px;background:rgba(0,0,0,.18)}
 .wadok .pdf{flex:none;padding:6px 5px;border-radius:4px;background:#e5534b;color:#fff;font-size:11px;font-weight:700}
 .wadok span:last-child{display:flex;flex-direction:column;min-width:0}.wadok b{font-size:15px;overflow-wrap:anywhere}.wadok small{font-size:12px;opacity:.7}
