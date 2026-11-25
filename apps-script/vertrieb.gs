@@ -19,7 +19,9 @@
  * Bereitstellen: Bereitstellen > Neue Bereitstellung > Web-App,
  *   Ausführen als: Ich, Zugriff: Jeder. Die URL kommt in config.js der App.
  */
-const STATUS = ['Offen', 'Zurückrufen', 'Terminiert', 'Nicht erreicht', 'Unqualifiziert', 'Auftrag']; // wie das Dropdown in lead_status
+const STATUS = ['Nicht erreicht', 'Angebot abgeschickt', 'Termin', 'Unqualifiziert']; // wie das Dropdown in lead_status (Sortier-Skript), leer = Neu
+// Seit 25.11.2026 nur noch diese Status. Alte Werte zeigt die App so, das Sortier-Skript schreibt sie so um.
+const ALT_STATUS = { 'Offen': 'Nicht erreicht', 'Zurückrufen': 'Nicht erreicht', 'Terminiert': 'Termin', 'Auftrag': 'Termin' };
 const TECHNIK = ['id', 'created_time', 'ad_id', 'ad_name', 'adset_id', 'adset_name', 'campaign_id', 'campaign_name',
   'form_id', 'form_name', 'is_organic', 'platform', 'full_name', 'phone_number', 'lead_status', 'Notiz', 'Notizen', 'Termin'];
 const MUELL = new Set(TECHNIK.concat(['CREATED', 'email'])); // was Meta beim Eintragen in falsche Zellen schreibt
@@ -29,7 +31,7 @@ const KUNDENFELDER = { email: ['email', 'e-mail', 'e_mail'], strasse: ['street_a
 const MAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const WEB_REITER = 'Website-Anfragen', WEB = '#web'; // Reiter für das Anfrageformular der Website, id = Tabellen-id + WEB
 const KI_EINTRAG = /^\d\d\.\d\d\.\d\d \d\d:\d\d KI: /;
-const AKTIV = ['Neu', 'Offen', 'Nicht erreicht', 'Zurückrufen', 'Terminiert']; // wie in der App
+const AKTIV = ['Neu', 'Nicht erreicht', 'Angebot abgeschickt', 'Termin']; // wie in der App
 const APP_URL = 'https://jdbrueder-collab.github.io/jd-vertrieb/';
 const PUSH_URL = 'https://jd-vertrieb-push.stempeluhr.workers.dev/send';
 const props = () => PropertiesService.getScriptProperties();
@@ -147,7 +149,7 @@ function alsLead(t, z, a) {
     anzeige: text('ad_name'),
     quelle: { ig: 'Instagram', fb: 'Facebook' }[text('platform')] || text('platform'),
     tabelle: t.name,
-    status: STATUS.includes(status) ? status : 'Neu', // leer oder CREATED heißt: noch niemand hat sich gekümmert
+    status: STATUS.includes(ALT_STATUS[status] || status) ? ALT_STATUS[status] || status : 'Neu', // leer oder CREATED heißt: noch niemand hat sich gekümmert
     naechster: zeit(...zelle('Termin'), true),
     notizen: eintraege.filter((e) => !KI_EINTRAG.test(e)).join('\n\n'),
     ki: ki.replace(KI_EINTRAG, ''),
@@ -267,7 +269,8 @@ function ki(d) {
     '(z. B. „Fr. angerufen, nicht erreicht“, „Will Komplettpaket, Budget 500 €“). Nichts aus dem Formular wiederholen, ' +
     'nichts über fehlende Infos schreiben.\n' +
     'naechster_schritt: höchstens 6 Wörter, z. B. „Montag nochmal anrufen“.\n' +
-    'status: der passende Status für den Lead.\n' +
+    'status: Nicht erreicht, wenn nicht erreicht oder nochmal angerufen werden soll; Angebot abgeschickt nur, wenn laut Notizen ein Angebot rausging; ' +
+    'Termin, wenn ein Termin fest ist; Unqualifiziert bei keinem Interesse oder wenn es nicht passt.\n' +
     'naechster_kontakt: Datum im Format YYYY-MM-DD, wenn ein Rückruf oder Termin vereinbart oder sinnvoll ist, sonst leer.',
     text,
     {
@@ -737,7 +740,7 @@ function lexAngebot(d) {
   return Object.assign(speichern({ id: d.id, wer: d.wer, notiz: notiz.replace('Angebot  ', 'Angebot ') }), { lex: kontakt, angebot, pdf64 });
 }
 
-// Angebot verschickt: vermerken und, falls noch kein Rückruf geplant ist, in 3 Tagen nachfassen.
+// Angebot verschickt: vermerken, Status „Angebot abgeschickt“ und, falls noch kein Rückruf geplant ist, in 3 Tagen nachfassen.
 // Dann steht der Lead an dem Tag unter „Fällig“, und die 8-Uhr-Nachricht erinnert daran.
 function gesendet(d) {
   const key = 'ANGEBOT_' + d.id, a = JSON.parse(props().getProperty(key) || 'null');
@@ -746,10 +749,11 @@ function gesendet(d) {
   a.gesendet = heute;
   props().setProperty(key, JSON.stringify(a));
   const { t, zeile } = finde(d.id), l = leseZeile(t, zeile);
-  const nach = ['Neu', 'Offen', 'Nicht erreicht', 'Zurückrufen'].includes(l.status) && (!l.naechster || l.naechster < heute)
+  const nach = ['Neu', 'Nicht erreicht', 'Angebot abgeschickt'].includes(l.status) && (!l.naechster || l.naechster < heute)
     ? berlin(new Date(Date.now() + 3 * 864e5), 'yyyy-MM-dd') : undefined;
+  const status = ['Neu', 'Nicht erreicht'].includes(l.status) ? 'Angebot abgeschickt' : undefined;   // Termin und Unqualifiziert bleiben
   const notiz = 'Angebot ' + a.nr + ' per ' + weg + (d.an ? ' an ' + d.an : '') + ' geschickt';
-  return Object.assign(speichern({ id: d.id, wer: d.wer, notiz, naechster: nach }), { angebot: a, nachfassen: nach || '' });
+  return Object.assign(speichern({ id: d.id, wer: d.wer, notiz, naechster: nach, status }), { angebot: a, nachfassen: nach || '' });
 }
 
 // Offene Leads, die noch kein Kunde in Lexware sind, nachträglich anlegen. Pro Aufruf höchstens 25 Sekunden,

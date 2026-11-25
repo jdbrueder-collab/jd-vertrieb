@@ -133,7 +133,7 @@ function welt(props) {
         return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ weg: drive.weg }) };
       }
       claudeBody = { url, headers: o.headers, body: JSON.parse(o.payload) };
-      const antwort = { stichpunkte: ['Will Komplettpaket', 'Ruft\n\nnach Rücksprache zurück'], naechster_schritt: 'Freitag zurückrufen', status: 'Zurückrufen', naechster_kontakt: '2026-11-27' };
+      const antwort = { stichpunkte: ['Will Komplettpaket', 'Ruft\n\nnach Rücksprache zurück'], naechster_schritt: 'Freitag zurückrufen', status: 'Nicht erreicht', naechster_kontakt: '2026-11-27' };
       return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: JSON.stringify(antwort) }] }) };
     } },
   };
@@ -159,13 +159,13 @@ assert.strictEqual(cora.status, 'Neu');                 // CREATED zählt als ne
 assert.strictEqual(cora.naechster, '');                 // "Termin" als Meta-Rest ist kein Datum
 assert.strictEqual(cora.wa, 'https://wa.me/491713333333');
 assert.strictEqual(a.id, anna);
-assert.strictEqual(a.status, 'Zurückrufen');
+assert.strictEqual(a.status, 'Nicht erreicht');          // alter Status „Zurückrufen“ heißt jetzt so
 assert.strictEqual(a.telefon, '0171 1111111');           // ohne "p:"
 assert.strictEqual(a.wa, 'https://wa.me/491711111111');
 assert.strictEqual(a.quelle, 'Instagram');
 assert.strictEqual(JSON.stringify(a.antworten), '[["Interesse","Referenzauto"],["Fahrzeug","Audi A6"]]');
 assert.strictEqual(r.leads[1].datum, new Date(Math.round(20777.5 * 864e5)).toISOString().slice(0, 19)); // Tabellen-Zahl
-assert.strictEqual(r.leads[3].status, 'Offen');
+assert.strictEqual(r.leads[3].status, 'Nicht erreicht');   // alter Status „Offen“
 assert.strictEqual(a.datum, '2026-11-19T09:00:00');        // aus der Anzeige, ohne Zeitzone der Tabelle
 assert.match(w.lead[4][0], /^manuell-abcdef12$/);         // von Hand eingetragener Lead bekommt eine id
 assert.strictEqual(w.heim[1][1], 'Leads November 2026');  // Name landet in Spalte B
@@ -175,10 +175,11 @@ assert.strictEqual(r.heimUrl, 'https://heim');
 
 // Meta schiebt zwischendurch noch einen Lead nach oben: gespeichert wird trotzdem beim richtigen Lead
 w.lead.unshift(['l:4', '', '', '', '', '', 'Dora Dazwischen', 'p:+491715555555', 'CREATED', '', '']);
-r = w.post({ aktion: 'speichern', pw, wer: 'David', id: anna, status: 'Terminiert', naechster: '2026-11-25', notiz: 'Erster Anruf' });
+assert.strictEqual(w.post({ aktion: 'speichern', pw, id: anna, status: 'Zurückrufen' }).code, 'status');   // alte Status gibt es nicht mehr
+r = w.post({ aktion: 'speichern', pw, wer: 'David', id: anna, status: 'Termin', naechster: '2026-11-25', notiz: 'Erster Anruf' });
 assert.ok(r.ok, r.fehler);
 const zeileAnna = w.lead.find((z) => z[6] === 'Anna Alt');
-assert.strictEqual(zeileAnna[8], 'Terminiert');
+assert.strictEqual(zeileAnna[8], 'Termin');
 assert.ok(zeileAnna[10] instanceof Date);
 assert.strictEqual(zeileAnna[9], 'Hat Interesse\n\n20.11.26 14:03 David: Erster Anruf'); // angehängt, nicht überschrieben
 assert.strictEqual(w.lead.find((z) => z[6] === 'Dora Dazwischen')[9], '');
@@ -204,7 +205,7 @@ assert.match(c.body.messages[0].content, /Fahrzeug: Audi A6/);
 assert.strictEqual(r.lead.ki, '• Will Komplettpaket\n• Ruft nach Rücksprache zurück\nNächster Schritt: Freitag zurückrufen');
 assert.doesNotMatch(r.lead.notizen, /KI:/);               // Verlauf zeigt nur, was das Team geschrieben hat
 assert.match(zeileAnna[9], /\n\n20\.11\.26 14:03 KI: • Will Komplettpaket\n/);
-assert.strictEqual(JSON.stringify(r.vorschlag), '{"status":"Zurückrufen","naechster":"2026-11-27"}');
+assert.strictEqual(JSON.stringify(r.vorschlag), '{"status":"Nicht erreicht","naechster":"2026-11-27"}');
 
 // WhatsApp-Vorlage: Platzhalter {Name} und {Wunsch} müssen bleiben, danach kommt sie mit der Liste
 assert.strictEqual(JSON.stringify(w.post({ aktion: 'liste', pw }).texte), '{}');
@@ -416,11 +417,12 @@ assert.strictEqual(fritzK.emailAddresses.private[0], 'fritz@example.de');
 assert.strictEqual(JSON.stringify(fritzK.addresses), '{"billing":[{"countryCode":"DE"}]}');   // ohne Adresse im Formular: wenigstens das Land
 assert.ok(w.props['LEX_' + A + '~l:6']);
 
-// Verschickt: Vermerk, Datum am Angebot, Nachfassen in 3 Tagen (Anna ist „Zurückrufen“ ohne Termin)
+// Verschickt: Vermerk, Status „Angebot abgeschickt“, Datum am Angebot, Nachfassen in 3 Tagen (Anna steht noch auf altem „Zurückrufen“ ohne Termin)
 Object.assign(w.lead.find((z) => z[6] === 'Anna Alt'), { 8: 'Zurückrufen', 10: '' });
 r = w.post({ aktion: 'gesendet', pw, wer: 'David', id: anna, weg: 'WhatsApp' });
 assert.ok(r.ok, r.fehler);
 assert.match(r.lead.notizen, /David: Angebot AG0049 per WhatsApp geschickt$/);
+assert.strictEqual(r.lead.status, 'Angebot abgeschickt');
 assert.strictEqual(r.nachfassen, r.lead.naechster);
 assert.ok(r.nachfassen > new Date().toISOString().slice(0, 10));
 assert.ok(JSON.parse(w.props['ANGEBOT_' + anna]).gesendet);
@@ -511,10 +513,10 @@ assert.strictEqual(l.quelle, 'Website');
 assert.strictEqual(l.status, 'Neu');
 assert.ok(r.leads.some((x) => x.name === '=HYPERLINK("x")'));  // als Text gespeichert, nicht als Formel
 // Status, Termin und Notiz landen in der Zeile im Website-Reiter
-r = w.post({ aktion: 'speichern', pw, wer: 'David', id: l.id, status: 'Zurückrufen', naechster: '2026-11-26', notiz: 'Ruft morgen zurück' });
+r = w.post({ aktion: 'speichern', pw, wer: 'David', id: l.id, status: 'Nicht erreicht', naechster: '2026-11-26', notiz: 'Ruft morgen zurück' });
 assert.ok(r.ok, r.fehler);
 const zeileEva = w.web.find((z) => z[5] === 'Eva Web');
-assert.strictEqual(zeileEva[8], 'Zurückrufen');
+assert.strictEqual(zeileEva[8], 'Nicht erreicht');
 assert.ok(zeileEva[10] instanceof Date);
 assert.match(zeileEva[9], /David: Ruft morgen zurück$/);
 // Neue Website-Anfragen melden sich per Push wie Meta-Leads
@@ -574,6 +576,18 @@ assert.strictEqual(w.props.META_TOKEN, 'EAA' + 'y'.repeat(80));
 assert.match(w.metaUrls.pop(), /\/v24\.0\/act_1240466211369292\?fields=name,account_status&access_token=EAAy+$/);
 assert.strictEqual(w.post({ aktion: 'liste', pw }).meta, true);
 w.metaFalsch(null);
+
+// Sortier-Skript der Lead-Tabelle: alte Status werden umgeschrieben statt gelöscht, Farben passen zu den neuen
+{
+  const sx = { console, Date, Math, String, Number, Object, Array, Set, JSON };
+  vm.createContext(sx);
+  vm.runInContext(fs.readFileSync(__dirname + '/apps-script/sortieren.gs', 'utf8'), sx);
+  const werte = [['id', 'created_time', 'full_name', 'lead_status', 'Notiz'], ['1', '', 'A', 'Zurückrufen', ''], ['2', '', 'B', 'Terminiert', ''],
+    ['3', '', 'C', 'Auftrag', ''], ['4', '', 'D', 'Offen', ''], ['5', '', 'E', 'Angebot abgeschickt', ''], ['6', '', 'F', 'CREATED', '']];
+  const sortiert = sx.bereinigeLeads_(werte);
+  assert.strictEqual(sortiert.werte.slice(1).map((z) => z[3]).join(), 'Nicht erreicht,Termin,Termin,Nicht erreicht,Angebot abgeschickt,');
+  assert.strictEqual(['Termin', 'Angebot abgeschickt', 'Nicht erreicht', 'Unqualifiziert', ''].map((x) => sx.farbeFuerStatus_(x)).join(), '#93c47d,#9fc5e8,#ffd966,#e06666,#ffffff');
+}
 
 // Sperre nach 10 Fehlversuchen
 for (let i = 0; i < 10; i++) w.post({ aktion: 'liste', pw: 'falsch' });

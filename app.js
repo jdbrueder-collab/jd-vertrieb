@@ -1,10 +1,11 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '39';
+const VERSION = '40';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
-const STATUS = { 'Neu': 'var(--accent)', 'Offen': 'var(--blue)', 'Nicht erreicht': 'var(--near)', 'Zurückrufen': 'var(--pink)', 'Terminiert': 'var(--teal)', 'Auftrag': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
-const AKTIV = ['Neu', 'Offen', 'Nicht erreicht', 'Zurückrufen', 'Terminiert'];
+// Seit 25.11.2026 nur noch diese fünf (Farben wie in der Lead-Tabelle: gelb, blau, grün, rot)
+const STATUS = { 'Neu': 'var(--accent)', 'Nicht erreicht': 'var(--near)', 'Angebot abgeschickt': 'var(--blue)', 'Termin': 'var(--ok)', 'Unqualifiziert': 'var(--grau)' };
+const AKTIV = ['Neu', 'Nicht erreicht', 'Angebot abgeschickt', 'Termin'];
 const WD = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
 const ICON = {
   phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 1.6 4.2 2 2 0 0 1 3.6 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L7.5 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.8 2z"/></svg>',
@@ -147,13 +148,13 @@ function kopf(titel) {
 function renderAnrufen() {
   const faell = leads.filter(faellig).sort((a, b) => a.naechster.localeCompare(b.naechster));
   const neu = leads.filter(l => l.status === 'Neu' && !faellig(l));
-  const nochmal = leads.filter(l => !faellig(l) && (['Offen', 'Nicht erreicht'].includes(l.status) || (l.status === 'Zurückrufen' && !l.naechster)));
+  const nochmal = leads.filter(l => !faellig(l) && l.status === 'Nicht erreicht');
   const woche = leads.filter(l => Date.now() - new Date(l.datum) < 7 * 864e5).length;
   view.innerHTML = kopf('Anrufen') + (!stand && laedt ? '<p class="loading">Leads werden geladen…</p>' : `
     <div class="tiles">
       <div class="tile"><b>${woche}</b><span>Diese Woche</span></div>
       <div class="tile"><b>${leads.filter(l => AKTIV.includes(l.status)).length}</b><span>Aktiv</span></div>
-      <div class="tile"><b>${leads.filter(l => l.status === 'Terminiert').length}</b><span>Termine</span></div>
+      <div class="tile"><b>${leads.filter(l => l.status === 'Termin').length}</b><span>Termine</span></div>
     </div>
     ${block('Fällig', faell)}${block('Neu', neu)}${block('Nochmal versuchen', nochmal)}
     ${stand && !DEMO && !tabellen.length ? `<div class="card empty"><b>📊</b>Noch keine Lead-Tabelle verbunden. <button class="pill wide" style="margin-top:var(--gap)" onclick="go('setup')">Zum Setup</button></div>`
@@ -291,7 +292,8 @@ function renderStatistik() {
       .finally(() => { s.laedt = false; if (tab === 'statistik') render(); });
   }
   const meta = ls.filter(istMeta), web = ls.filter(l => l.quelle === 'Website');
-  const termin = l => l.status === 'Terminiert' || l.status === 'Auftrag', erreicht = l => !['Neu', 'Nicht erreicht'].includes(l.status);
+  const termin = l => l.status === 'Termin', erreicht = l => !['Neu', 'Nicht erreicht'].includes(l.status);
+  const mitAngebot = l => l.status === 'Angebot abgeschickt' || !!l.angebot?.gesendet;
   const m = s.meta && !s.meta.fehler ? s.meta : null, ausgaben = m ? m.ausgaben : null;
   // Angebote und Rechnungen: nur Fahrzeug-Geschäft (Aufbereitung, Veredelung, Folie, Trockeneis), das sortiert das Skript aus
   const ang = Array.isArray(s.angebote) ? s.angebote.filter(echt) : null, re = Array.isArray(s.rechnungen) ? s.rechnungen.filter(echt) : null;
@@ -309,7 +311,7 @@ function renderStatistik() {
   const leer = text => `<p class="muted" style="margin:0">${s.laedt ? 'Lädt…' : text}</p>`;
   const hinweis = (teil, was) => !s.laedt && (s.fehler || s[teil]?.fehler) ? `<p class="hint">${esc(was)}: ${esc(s.fehler || s[teil].fehler)}</p>` : '';
   const zeile = (name, farbe, f) => `<tr><td>${farbe ? `<span class="dot" style="--c:${farbe}"></span>` : ''}${esc(name)}</td><td>${meta.filter(f).length}</td><td>${web.filter(f).length}</td><td><b>${ls.filter(f).length}</b></td></tr>`;
-  const weg = [['Leads', ls.length], ['Erreicht', ls.filter(erreicht).length], ['Termin', ls.filter(termin).length], ['Auftrag', ls.filter(l => l.status === 'Auftrag').length]];
+  const weg = [['Leads', ls.length], ['Erreicht', ls.filter(erreicht).length], ['Angebot', ls.filter(mitAngebot).length], ['Termin', ls.filter(termin).length]];
   view.innerHTML = kopf('Statistik') + `
     <div class="zeitwahl" role="group" aria-label="Zeitraum">${Object.entries(ZEITEN).map(([k, n]) => `<button class="pill${k === statZeit ? ' sel' : ''}" aria-pressed="${k === statZeit}" onclick="statZeit='${k}';render()">${n}</button>`).join('')}</div>
     <div class="kpis">
@@ -328,9 +330,9 @@ function renderStatistik() {
       <table class="stab"><thead><tr><th>Status</th><th>Meta</th><th>Web</th><th>Gesamt</th></tr></thead><tbody>
         ${Object.entries(STATUS).map(([st, farbe]) => zeile(st, farbe, l => l.status === st)).join('')}
       </tbody><tfoot>${zeile('Alle', '', () => true)}</tfoot></table></div>
-    <div class="card"><p class="kartenkopf"><b>Vom Lead zum Auftrag</b></p>
+    <div class="card"><p class="kartenkopf"><b>Vom Lead zum Termin</b></p>
       <div class="weg">${weg.map(([n, z]) => `<div><span>${n}</span><span class="spur"><i style="width:${ls.length ? z / ls.length * 100 : 0}%"></i></span><b>${z}</b><span class="muted">${proz(z, ls.length)}</span></div>`).join('')}</div>
-      <p class="hint" style="margin:var(--gap) 0 0">Erreicht heißt: nicht mehr Neu und nicht „Nicht erreicht“. Termin zählt Terminiert und Auftrag.</p></div>
+      <p class="hint" style="margin:var(--gap) 0 0">Erreicht heißt: nicht mehr Neu und nicht „Nicht erreicht“. Angebot heißt: ein Angebot wurde verschickt.</p></div>
     ${saeulen('Leads', ls.map(l => ({ t: tag10(l), g: quelleVon(l), w: 1 })), von, bis, QUELLEN, String)}`}
     <div class="card"><p class="kartenkopf"><b>ROAS</b><span class="muted">Return on Ad Spend</span></p>
       ${m && ang && re ? `<table class="stab"><thead><tr><th>Aus Meta-Leads</th><th>Betrag</th><th>ROAS</th></tr></thead><tbody>
@@ -343,8 +345,8 @@ function renderStatistik() {
       ${m ? `<table class="stab"><tbody>
         <tr><td>Ausgaben</td><td><b>${euro(ausgaben)}</b></td></tr>
         <tr><td>pro Lead (${meta.length})</td><td>${pro(meta.length)}</td></tr>
+        <tr><td>pro Angebot (${meta.filter(mitAngebot).length})</td><td>${pro(meta.filter(mitAngebot).length)}</td></tr>
         <tr><td>pro Termin (${meta.filter(termin).length})</td><td>${pro(meta.filter(termin).length)}</td></tr>
-        <tr><td>pro Auftrag (${meta.filter(l => l.status === 'Auftrag').length})</td><td>${pro(meta.filter(l => l.status === 'Auftrag').length)}</td></tr>
         <tr><td>pro Klick</td><td>${pro(m.klicks)}</td></tr>
         <tr><td>Gesehen (Impressionen)</td><td>${m.impressionen.toLocaleString('de-DE')}</td></tr></tbody></table>`
         : leer('Meta ist noch nicht verbunden. Unter Setup → Meta-Werbung den Zugriffsschlüssel einfügen.')}</div>
@@ -1111,10 +1113,10 @@ function demoApi(aktion, d) {
   window.DEMO_LEADS ||= [
     lead('d1', 12, 'Lena Becker', 1, 'Referenzauto', 'VW Golf 8', 'Neu'),
     { ...lead('d2', 95, 'Markus Schmidt', 2, 'Aufbereitung', 'BMW X5', 'Neu'), quelle: 'Facebook' },
-    lead('d3', 1500, 'Sabine Klein', 3, 'Referenzauto', 'Audi A4 Avant', 'Zurückrufen', '19.11.26 10:12 David: Will den Preis mit ihrem Mann besprechen und meldet sich. Heute nochmal anrufen.', 'Interessiert an einer Aufbereitung als Referenzauto, will den Preis erst mit ihrem Mann besprechen.\nNächster Schritt: Heute zurückrufen und den Termin festmachen.', heute()),
+    lead('d3', 1500, 'Sabine Klein', 3, 'Referenzauto', 'Audi A4 Avant', 'Nicht erreicht', '19.11.26 10:12 David: Will den Preis mit ihrem Mann besprechen und meldet sich. Heute nochmal anrufen.', 'Interessiert an einer Aufbereitung als Referenzauto, will den Preis erst mit ihrem Mann besprechen.\nNächster Schritt: Heute zurückrufen und den Termin festmachen.', heute()),
     { ...lead('d4', 2900, 'Tobias Wagner', 4, 'Aufbereitung', 'Mercedes C-Klasse', 'Nicht erreicht', '18.11.26 16:40 Jonathan: Mailbox, nichts drauf gesprochen.'), quelle: 'Website', anzeige: '' },
-    { lex: 'K-d5', ...lead('d5', 4400, 'Julia Hoffmann', 5, 'Referenzauto', 'VW T6 Multivan', 'Terminiert', '17.11.26 09:05 David: Termin fest, bringt den Bus am Montag um 8 Uhr.', 'Will den T6 als Referenzauto aufbereiten lassen. Termin steht.\nNächster Schritt: Montag 8 Uhr Annahme vorbereiten.', ymd(new Date(Date.now() + 3 * 864e5))) },
-    { lex: 'K-d6', ...lead('d6', 9000, 'Dennis Krämer', 6, 'Anderes', 'Porsche 911', 'Auftrag', '13.11.26 14:20 Jonathan: Komplettpaket gebucht, sehr zufrieden.') },
+    { lex: 'K-d5', ...lead('d5', 4400, 'Julia Hoffmann', 5, 'Referenzauto', 'VW T6 Multivan', 'Termin', '17.11.26 09:05 David: Termin fest, bringt den Bus am Montag um 8 Uhr.', 'Will den T6 als Referenzauto aufbereiten lassen. Termin steht.\nNächster Schritt: Montag 8 Uhr Annahme vorbereiten.', ymd(new Date(Date.now() + 3 * 864e5))) },
+    { lex: 'K-d6', ...lead('d6', 9000, 'Dennis Krämer', 6, 'Anderes', 'Porsche 911', 'Angebot abgeschickt', '13.11.26 14:20 Jonathan: Komplettpaket gebucht, sehr zufrieden.') },
   ];
   const DL = window.DEMO_LEADS, kopie = x => JSON.parse(JSON.stringify(x));
   return new Promise((ok, nein) => setTimeout(() => {
@@ -1176,7 +1178,7 @@ function demoApi(aktion, d) {
     if (aktion === 'ki') {
       if (!l.notizen) return nein(new Error('Es gibt noch keine Notizen zum Zusammenfassen.'));
       l.ki = `Demo-Zusammenfassung: ${l.name} interessiert sich für ${l.antworten.map(a => a[1]).join(', ')}. Im echten Betrieb schreibt Claude hier aus deinen Notizen eine Kurzfassung.\nNächster Schritt: Morgen anrufen und einen Termin vorschlagen.`;
-      return ok({ lead: kopie(l), vorschlag: { status: 'Zurückrufen', naechster: morgen() } });
+      return ok({ lead: kopie(l), vorschlag: { status: 'Nicht erreicht', naechster: morgen() } });
     }
   }, aktion === 'ki' ? 1400 : 250));
 }

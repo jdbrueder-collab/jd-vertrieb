@@ -13,7 +13,9 @@ const SHEET_NAMEN = ["Tabellenblatt1", "Website-Anfragen"]; // Meta-Leads, Anfra
 const STATUS_NAME = "lead_status";
 const NOTIZ_NAMEN = ["Notiz", "Notizen"];
 const DATUM_NAME = "created_time";
-const STATUS_WERTE = ["Neu", "Offen", "Zurückrufen", "Terminiert", "Nicht erreicht", "Unqualifiziert", "Auftrag"]; // Neu = weiß, zum Zurücksetzen
+const STATUS_WERTE = ["Neu", "Nicht erreicht", "Angebot abgeschickt", "Termin", "Unqualifiziert"]; // Neu = weiß, zum Zurücksetzen
+// Seit 25.11.2026 nur noch diese Status. Alte Werte werden beim Sortieren umgeschrieben statt gelöscht.
+const ALTE_STATUS = { "offen": "Nicht erreicht", "zurückrufen": "Nicht erreicht", "terminiert": "Termin", "auftrag": "Termin" };
 const KALENDER_NAME = "Termin";    // Spalte mit dieser Überschrift bekommt den Kalender (Doppelklick)
 const KALENDER_SPALTE = 19;        // S: falls es noch keine Spalte „Termin“ gibt, kommt sie hierhin (nur wenn S1 leer)
 
@@ -27,7 +29,6 @@ const FARBE_GRUEN = "#93c47d";
 const FARBE_GELB  = "#ffd966";
 const FARBE_ROT   = "#e06666";
 const FARBE_BLAU  = "#9fc5e8";
-const FARBE_ROSA  = "#ead1dc";
 const FARBE_WEISS = "#ffffff";
 
 // ===== EINMALIG AUSFÜHREN =====
@@ -85,11 +86,10 @@ function berlinSerial_(datum) {
 
 function farbeFuerStatus_(status) {
   const s = normalisiereStatus_(status);
-  if (s === "terminiert" || s === "auftrag") return FARBE_GRUEN;
+  if (s === "termin") return FARBE_GRUEN;
   if (s === "nicht erreicht") return FARBE_GELB;
   if (s === "unqualifiziert") return FARBE_ROT;
-  if (s === "offen") return FARBE_BLAU;
-  if (s === "zurückrufen") return FARBE_ROSA;
+  if (s === "angebot abgeschickt") return FARBE_BLAU;
   return FARBE_WEISS;
 }
 
@@ -124,6 +124,7 @@ function bereinigeLeads_(werte) {
     const zeile = werte[r];
     const setze = (i, v) => { if (zeile[i] !== v) { zeile[i] = v; geaendert = true; } };
 
+    if (sp.status && ALTE_STATUS[normalisiereStatus_(zeile[sp.status - 1])]) setze(sp.status - 1, ALTE_STATUS[normalisiereStatus_(zeile[sp.status - 1])]);
     if (sp.status && !erlaubt.has(normalisiereStatus_(zeile[sp.status - 1]))) setze(sp.status - 1, "");
 
     // Kalenderspalte: Meta-Müll raus, Datumswerte bleiben
