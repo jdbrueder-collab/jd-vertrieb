@@ -96,6 +96,7 @@ input:focus-visible,textarea:focus-visible{box-shadow:0 0 0 2px var(--accent)}
 .row>input{width:55%;text-align:right;min-height:44px}
 .row>input[type=date],.datum input{width:auto}
 .datum input{min-width:8.5em;min-height:44px}
+.row>input[type=time]{width:auto;min-width:6.5em;min-height:44px}
 .row>input[type=checkbox]{width:auto;min-height:0;padding:0;background:none;accent-color:var(--accent)}
 .menge{display:flex;align-items:center;gap:var(--gap-s);white-space:nowrap}
 .menge b{min-width:1.4em;text-align:center}

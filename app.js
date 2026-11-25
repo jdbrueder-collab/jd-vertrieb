@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '46';
+const VERSION = '47';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 // Seit 25.11.2026 nur noch diese fünf (Farben wie in der Lead-Tabelle: gelb, blau, grün, rot)
@@ -106,8 +106,9 @@ function wann(l) {
   if (AKTIV.includes(l.status) && l.naechster) {
     const h = heute();
     if (l.naechster < h) return `<span class="when due">seit ${datumKurz(l.naechster).slice(3)}</span>`;
-    if (l.naechster === h) return '<span class="when due">Heute</span>';
-    return `<span class="when">${l.naechster === morgen() ? 'Morgen' : datumKurz(l.naechster)}</span>`;
+    const um = l.uhr ? ' ' + l.uhr : '';
+    if (l.naechster === h) return `<span class="when due">Heute${um}</span>`;
+    return `<span class="when">${l.naechster === morgen() ? 'Morgen' : datumKurz(l.naechster)}${um}</span>`;
   }
   return `<span class="when">${relativ(l.datum)}</span>`;
 }
@@ -150,7 +151,7 @@ function kopf(titel) {
 
 // ---------- Tab: Anrufen ----------
 function renderAnrufen() {
-  const faell = leads.filter(faellig).sort((a, b) => a.naechster.localeCompare(b.naechster));
+  const faell = leads.filter(faellig).sort((a, b) => (a.naechster + (a.uhr || '99')).localeCompare(b.naechster + (b.uhr || '99')));
   const neu = leads.filter(l => l.status === 'Neu' && !faellig(l));
   const nochmal = leads.filter(l => !faellig(l) && l.status === 'Nicht erreicht');
   const woche = leads.filter(l => Date.now() - new Date(l.datum) < 7 * 864e5).length;
@@ -539,7 +540,8 @@ function leadHtml(l) {
   return `<div class="sheet-head"><span></span><h2>${esc(l.name || 'Ohne Namen')}</h2><button class="pill" onclick="closeSheet()">Fertig</button></div>
     <div class="label">Details</div>
     <div class="group">${zeile('Telefon', l.telefon)}${zeile('Eingang', isNaN(eingang) ? '' : eingang.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }))}${l.antworten.map(a => zeile(a[0], a[1])).join('')}${zeile('Anzeige', l.anzeige)}${zeile('Quelle', l.quelle)}${zeile('Tabelle', l.tabelle)}</div>
-    <div class="group"><div class="row"><label for="termin">Termin oder Rückruf</label><span class="datum"><input id="termin" type="date" value="${esc(l.naechster)}" onchange="terminSetzen(${id}, this.value)"><button class="pill sm" onclick="terminSetzen(${id}, '')" aria-label="Termin entfernen"${l.naechster ? '' : ' hidden'}>✕</button></span></div></div>
+    <div class="group"><div class="row"><label for="termin">Termin oder Rückruf</label><span class="datum"><input id="termin" type="date" value="${esc(l.naechster)}" onchange="terminSetzen(${id}, this.value)"><button class="pill sm" onclick="terminSetzen(${id}, '')" aria-label="Termin entfernen"${l.naechster ? '' : ' hidden'}>✕</button></span></div>
+      <div class="row"><label for="uhr">Uhrzeit<br><span class="muted small">Benachrichtigung zur Uhrzeit</span></label><input id="uhr" type="time" value="${esc(l.uhr || '')}" onchange="terminSetzen(${id}, $('#termin').value || heute(), this.value)" aria-label="Uhrzeit für den Rückruf"></div></div>
     ${lexAn ? kundeBlock(l) : ''}
     <div class="label">Neue Notiz</div>
     <textarea id="notiz" placeholder="Wie lief das Gespräch? Was will der Kunde?" oninput="entwurfMerken(${id})"></textarea>
@@ -550,7 +552,7 @@ function leadHtml(l) {
       ${l.notizen ? `<button class="pill wide" id="kbtn" style="margin:var(--gap) 0 0" onclick="kiStarten(${id})">✨ ${l.ki ? 'Neu zusammenfassen' : 'Zusammenfassen'}</button>` : ''}</div>
     <div class="label">Verlauf</div>
     ${ausgang().filter(n => n.id === l.id).map(n => `<div class="card wartet">⏳ Noch nicht gesendet, geht raus, sobald Verbindung da ist<br>${esc(new Date(n.zeit).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' }))}${konto.name ? ' ' + esc(konto.name) : ''}: ${esc(
-      [n.notiz, n.status && 'Status ' + n.status, n.naechster !== undefined && (n.naechster ? 'Termin ' + datumKurz(n.naechster) : 'Termin entfernt')].filter(Boolean).join(' · '))}</div>`).join('')}
+      [n.notiz, n.status && 'Status ' + n.status, n.naechster !== undefined && (n.naechster ? 'Termin ' + datumKurz(n.naechster) + (n.uhr ? ' um ' + n.uhr : '') : 'Termin entfernt')].filter(Boolean).join(' · '))}</div>`).join('')}
     <div class="card verlauf">${l.notizen ? esc(l.notizen) : '<span class="muted">Noch keine Notizen.</span>'}</div>
     <div class="label">Fotos</div>
     <div class="card" id="fotos">${fotosHtml(l)}</div>
@@ -591,19 +593,21 @@ async function setze(id, aend) {
 // Termin: iOS meldet schon beim Tippen im Kalender jede Änderung. Deshalb das Fenster nicht neu zeichnen
 // (sonst klappt der Kalender weg und Tipps gehen verloren) und erst speichern, wenn eine Sekunde nichts mehr kommt.
 const termin = {};
-function terminSetzen(id, wert) {
+function terminSetzen(id, wert, uhr) {
   const l = leads.find(x => x.id === id); if (!l) return;
-  const t = termin[id] ||= { alt: l.naechster }, el = offen === id && $('#termin');
-  if (el) { el.value = wert; el.nextElementSibling.hidden = !wert; }
-  l.naechster = wert; render();
+  uhr = !wert ? '' : uhr !== undefined ? uhr : l.uhr || '';   // neuer Tag: Uhrzeit bleibt, kein Tag: keine Uhrzeit
+  const t = termin[id] ||= { alt: l.naechster, altUhr: l.uhr || '' }, el = offen === id && $('#termin');
+  if (el) { el.value = wert; el.nextElementSibling.hidden = !wert; const u = $('#uhr'); if (u && document.activeElement !== u) u.value = uhr; }
+  l.naechster = wert; l.uhr = uhr; render();
   clearTimeout(t.uhr);
   t.uhr = setTimeout(async () => {
     delete termin[id];
     const jetzt = () => leads.find(x => x.id === id);   // Liste kann inzwischen neu geladen sein
-    const r = await inAusgang(id, { naechster: wert });
-    if (r === true) toast(wert ? `Melden am ${datumKurz(wert)}` : 'Termin entfernt');
-    else if (r === 'wartet') toast('Termin ist auf dem Handy gesichert und geht raus, sobald du online bist.');
-    else if (jetzt()?.naechster === wert) { jetzt().naechster = t.alt; leadNeu(id); }
+    const r = await inAusgang(id, { naechster: wert, uhr });
+    const ohnePush = uhr && !(pushOk() && Notification.permission === 'granted') ? ' Benachrichtigungen sind auf diesem Gerät aus: Setup → App.' : '';
+    if (r === true) toast(!wert ? 'Termin entfernt' : uhr ? `Rückruf ${datumKurz(wert)} um ${uhr}. Dann kommt eine Benachrichtigung.${ohnePush}` : `Melden am ${datumKurz(wert)}`);
+    else if (r === 'wartet') toast('Termin ist auf dem Handy gesichert und geht raus, sobald du online bist.' + ohnePush);
+    else if (jetzt()?.naechster === wert) { Object.assign(jetzt(), { naechster: t.alt, uhr: t.altUhr }); leadNeu(id); }
     render();
   }, 1000);
 }
@@ -636,7 +640,8 @@ function inAusgang(id, aend) {
 function ausgangDrueber() {
   ausgang().forEach(n => { const l = leads.find(x => x.id === n.id); if (!l) return;
     if (n.status) l.status = n.status;
-    if (n.naechster !== undefined) l.naechster = n.naechster; });
+    if (n.naechster !== undefined) l.naechster = n.naechster;
+    if (n.uhr !== undefined) l.uhr = n.uhr; });
 }
 async function notizSenden(id, notiz) {
   const e = lies('jdv-entwurf', {}); delete e[id]; merke('jdv-entwurf', e);
@@ -1267,6 +1272,7 @@ function demoApi(aktion, d) {
     if (aktion === 'speichern') {
       if (d.status !== undefined) l.status = d.status;
       if (d.naechster !== undefined) l.naechster = d.naechster;
+      if (d.uhr !== undefined) l.uhr = d.uhr;
       if (d.notiz) l.notizen = (l.notizen ? l.notizen + '\n\n' : '') + `${jetzt} ${konto.name || 'Demo'}: ${d.notiz}`;
       return ok({ lead: kopie(l) });
     }

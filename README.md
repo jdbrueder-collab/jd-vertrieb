@@ -36,6 +36,8 @@ Danach im Apps Script oben die Funktion **vertriebEinrichten** wählen und **Aus
 - Einschalten pro Handy: App auf den Startbildschirm, dann *Setup → App → Benachrichtigungen*. Auf dem iPhone geht das nur in der installierten App (ab iOS 16.4).
 - Versendet wird über einen kleinen, kostenlosen Dienst bei Cloudflare (`push/worker.js`, wie bei Dayliner). Er merkt sich nichts, das Skript schickt die Geräte mit. Neu hochladen: im Ordner `push` `npx wrangler deploy`. Geheimnisse dort: `VAPID_PRIVATE` (aus `push/.vapid-private`) und `GEHEIMNIS` (aus `push/.geheimnis`, dasselbe wie `PUSH_GEHEIMNIS` im Skript). Beide Dateien liegen nur lokal.
 
+
+**Rückruf mit Uhrzeit:** Im Lead unter *Termin oder Rückruf* gibt es eine *Uhrzeit*. Ist sie gesetzt, kommt zur Uhrzeit eine Benachrichtigung „☎️ Rückruf: Name“ an die Geräte dessen, der sie eingetragen hat (Name aus *Setup → Du*, sonst an alle). Ein Tipp darauf öffnet den Lead. Die Tabelle kennt nur den Tag; die Uhrzeit steht in der Skripteigenschaft `RUECKRUF_<Lead-id>` und gilt nur, solange der Tag passt. Der Minuten-Auslöser (`meldeNeueLeads`) prüft dafür jede Minute (`erinnern`). In den Listen steht die Uhrzeit hinter dem Tag („Heute 14:30“), *Fällig* ist danach sortiert.
 ## Fotos
 
 Beim Lead unter *Fotos* lassen sich Bilder in voller Auflösung hochladen, eins nach dem anderen. Sie landen in Google Drive im Ordner **JD Vertrieb Fotos**, pro Kunde ein Unterordner mit Name und Auto. Der Unterordner ist für jeden mit dem Link sichtbar, damit *An Kunden* den Link direkt per WhatsApp verschicken kann. Der kostenlose Google-Speicher (15 GB) reicht für grob 100 Autos mit je 30 Fotos.

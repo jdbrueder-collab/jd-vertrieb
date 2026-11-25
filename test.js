@@ -628,6 +628,34 @@ w.metaFalsch(null);
   assert.ok(w.post({ ...n, nid: 'neu456', zeit: 'Quatsch' }).ok);   // kaputte Zeit: dann eben jetzt
 }
 
+// Rückruf mit Uhrzeit: gemerkt, in der Liste, zur Uhrzeit eine Benachrichtigung an den, der ihn eingetragen hat
+{
+  const morgen = new Date(Date.now() + 864e5).toISOString().slice(0, 10), heute = new Date().toISOString().slice(0, 10);
+  w.props.PUSH_GEHEIMNIS = 'geheim';
+  w.props.PUSH_ABOS = JSON.stringify([{ endpoint: 'https://web.push.apple.com/david', keys: {}, wer: 'David' }, { endpoint: 'https://web.push.apple.com/jona', keys: {}, wer: 'Jonathan' }]);
+  let r4 = w.post({ aktion: 'speichern', pw, wer: 'David', id: anna, naechster: morgen, uhr: '14:30' });
+  assert.ok(r4.ok, r4.fehler); assert.strictEqual(r4.lead.uhr, '14:30');
+  assert.strictEqual(JSON.parse(w.props['RUECKRUF_' + anna]).zeit, morgen + 'T14:30');
+  assert.strictEqual(w.post({ aktion: 'liste', pw }).leads.find((l) => l.id === anna).uhr, '14:30');
+  assert.strictEqual(w.post({ aktion: 'speichern', pw, id: anna, uhr: '25:00' }).code, 'datum');
+  const vorher = w.pushes.length;
+  w.ctx.erinnern(); assert.strictEqual(w.pushes.length, vorher);                       // noch nicht dran
+  w.props['RUECKRUF_' + anna] = JSON.stringify({ zeit: heute + 'T00:00', wer: 'David', name: 'Anna Alt' });   // jetzt dran
+  w.ctx.erinnern();
+  assert.strictEqual(w.pushes.length, vorher + 1);
+  const p = w.pushes[w.pushes.length - 1].body;
+  assert.match(p.title, /Rückruf: Anna Alt/); assert.strictEqual(p.abos.length, 1); assert.strictEqual(p.abos[0].wer, 'David');
+  w.ctx.erinnern(); assert.strictEqual(w.pushes.length, vorher + 1);                   // nur einmal
+  // anderer Tag ohne Uhrzeit (z. B. Nachfassen): alte Erinnerung weg
+  w.props['RUECKRUF_' + anna] = JSON.stringify({ zeit: morgen + 'T09:00', wer: 'David', name: 'Anna Alt' });
+  r4 = w.post({ aktion: 'speichern', pw, id: anna, naechster: '2027-01-05' });
+  assert.strictEqual(w.props['RUECKRUF_' + anna], undefined); assert.strictEqual(r4.lead.uhr, '');
+  // Uhrzeit löschen
+  w.post({ aktion: 'speichern', pw, id: anna, naechster: morgen, uhr: '08:15' });
+  w.post({ aktion: 'speichern', pw, id: anna, uhr: '' });
+  assert.strictEqual(w.props['RUECKRUF_' + anna], undefined);
+}
+
 // Sperre nach 10 Fehlversuchen
 for (let i = 0; i < 10; i++) w.post({ aktion: 'liste', pw: 'falsch' });
 assert.match(w.post({ aktion: 'liste', pw }).fehler, /Zu viele Fehlversuche/);

@@ -191,6 +191,7 @@ function liste() {
   const alle = props().getProperties();
   leads.forEach((l) => {   // Kontakt in Lexware und letztes Angebot, falls vorhanden
     l.lex = alle['LEX_' + l.id] || '';
+    l.uhr = uhrVon(l, alle['RUECKRUF_' + l.id]);
     const k = alle['KONTAKT_' + l.id] ? JSON.parse(alle['KONTAKT_' + l.id]) : {};   // Name und Telefon, wie sie in Lexware stehen
     if (k.name) l.name = k.name;
     if (k.telefon) Object.assign(l, { telefon: k.telefon, wa: waAus(k.telefon) });
@@ -213,9 +214,12 @@ function finde(appId) {
 
 // Status, Termin und neue Notiz speichern. Notizen werden mit Zeit und Name angehängt, nie überschrieben.
 function leseZeile(t, nr) {
-  const r = t.sheet.getRange(nr, 1, 1, t.kopf.length);
-  return alsLead(t, r.getValues()[0], r.getDisplayValues()[0]);
+  const r = t.sheet.getRange(nr, 1, 1, t.kopf.length), l = alsLead(t, r.getValues()[0], r.getDisplayValues()[0]);
+  l.uhr = uhrVon(l, props().getProperty('RUECKRUF_' + l.id));
+  return l;
 }
+// Rückruf mit Uhrzeit: die Zeit steht in RUECKRUF_<id> (die Tabelle kennt nur den Tag). Gilt nur, solange der Tag passt.
+const uhrVon = (l, roh) => { const r = roh ? JSON.parse(roh) : null; return r && l.naechster && r.zeit.slice(0, 10) === l.naechster ? r.zeit.slice(11, 16) : ''; };
 
 function speichern(d) {
   const lock = LockService.getScriptLock();
@@ -234,6 +238,7 @@ function speichern(d) {
       if (d.naechster && !/^\d{4}-\d{2}-\d{2}$/.test(d.naechster)) throw fehler('datum', 'Ungültiges Datum.');
       zelle('Termin').setValue(d.naechster ? new Date(d.naechster + 'T12:00:00') : '');
     }
+    if (d.uhr && !/^([01]\d|2[0-3]):[0-5]\d$/.test(d.uhr)) throw fehler('datum', 'Ungültige Uhrzeit.');
     const wer = String(d.wer || '').trim() || 'Team';
     let eintrag = d.ki ? 'KI: ' + d.ki : String(d.notiz || '').trim() && wer + ': ' + String(d.notiz).trim();
     // Notizen, die ohne Verbindung geschrieben wurden, schickt die App später nach: mit Kennung (nid), damit eine
@@ -250,10 +255,31 @@ function speichern(d) {
       if (nid) cache.put(nid, '1', 21600);   // 6 Stunden
     }
     SpreadsheetApp.flush();
-    return { lead: leseZeile(t, zeile) };
+    const l = leseZeile(t, zeile), rk = 'RUECKRUF_' + d.id;
+    if (d.uhr !== undefined) {   // Uhrzeit gesetzt oder gelöscht: zur Uhrzeit kommt eine Benachrichtigung (erinnern)
+      if (d.uhr && l.naechster) props().setProperty(rk, JSON.stringify({ zeit: l.naechster + 'T' + d.uhr, wer: String(d.wer || '').trim(), name: l.name || l.telefon }));
+      else props().deleteProperty(rk);
+      l.uhr = uhrVon(l, props().getProperty(rk));
+    } else if (d.naechster !== undefined && !uhrVon(l, props().getProperty(rk))) props().deleteProperty(rk);   // anderer Tag: alte Erinnerung weg
+    return { lead: l };
   } finally {
     lock.releaseLock();
   }
+}
+
+// Rückrufe mit Uhrzeit: Jede Minute (mit meldeNeueLeads) schauen, was fällig ist, und eine Benachrichtigung an die Geräte
+// dessen schicken, der den Rückruf eingetragen hat, sonst an alle. Gemeldete bleiben bis zum Tag danach stehen.
+function erinnern() {
+  const alle = props().getProperties(), jetzt = berlin(new Date(), "yyyy-MM-dd'T'HH:mm");
+  Object.keys(alle).filter((k) => k.startsWith('RUECKRUF_')).forEach((k) => {
+    const r = JSON.parse(alle[k]);
+    if (r.zeit.slice(0, 10) < jetzt.slice(0, 10)) return props().deleteProperty(k);
+    if (r.gemeldet || r.zeit > jetzt) return;
+    const meine = JSON.parse(alle.PUSH_ABOS || '[]').filter((a) => r.wer && a.wer === r.wer);
+    try { sende('☎️ Rückruf: ' + (r.name || 'Lead'), 'Jetzt anrufen, ausgemacht für ' + r.zeit.slice(11) + ' Uhr', APP_URL + '#lead=' + encodeURIComponent(k.slice(9)), meine.length ? meine : null); }
+    catch (e) { console.warn('Rückruf ' + k + ': ' + e.message); }
+    props().setProperty(k, JSON.stringify(Object.assign(r, { gemeldet: true })));
+  });
 }
 
 // Claude fasst die Notizen zum Lead zusammen und schlägt Status und nächsten Kontakt vor.
@@ -442,6 +468,7 @@ function sende(title, body, url, nur) {
 // Zeitauslöser jede Minute. Gelesen wird nur, wenn sich eine Lead-Tabelle geändert hat. Gemerkt werden die
 // ids der Leads der letzten zwei Tage, alles, was dort neu auftaucht, wird gemeldet.
 function meldeNeueLeads() {
+  try { erinnern(); } catch (e) { console.warn('Rückrufe: ' + e.message); }
   const stand = verbunden().map((v) => { try { return DriveApp.getFileById(v.id.replace(WEB, '')).getLastUpdated().getTime(); } catch (e) { return 0; } }).join();
   if (stand === props().getProperty('PUSH_STAND')) return;
   const grenze = berlin(new Date(Date.now() - 2 * 864e5), "yyyy-MM-dd'T'HH:mm:ss");
