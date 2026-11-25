@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '45';
+const VERSION = '46';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 // Seit 25.11.2026 nur noch diese fünf (Farben wie in der Lead-Tabelle: gelb, blau, grün, rot)
@@ -59,7 +59,7 @@ async function api(aktion, daten = {}) {
   if (!j.ok) throw Object.assign(new Error(j.fehler || 'Fehler'), { code: j.code });
   return j;
 }
-function uebernimm(j) { leads = j.leads; tabellen = j.tabellen || []; heimUrl = j.heimUrl || ''; texte = { ...TEXT_STANDARD, ...j.texte }; skriptAlt = !DEMO && !j.texte; lexAn = DEMO || !!j.lexware; metaAn = DEMO || !!j.meta; stand = new Date(); }
+function uebernimm(j) { leads = j.leads; tabellen = j.tabellen || []; heimUrl = j.heimUrl || ''; texte = { ...TEXT_STANDARD, ...j.texte }; skriptAlt = !DEMO && !j.texte; lexAn = DEMO || !!j.lexware; metaAn = DEMO || !!j.meta; stand = new Date(); ausgangDrueber(); }
 async function laden(still) {
   if (!angemeldet() || laedt) return;
   if (!still) for (const k in statCache) delete statCache[k];   // Aktualisieren holt auch Meta und Lexware neu
@@ -549,7 +549,8 @@ function leadHtml(l) {
     <div class="card"><div class="ki" id="ki">${l.ki ? esc(l.ki) : '<span class="muted">Noch keine. Sobald du eine Notiz speicherst, fasst Claude zusammen.</span>'}</div>${vor}
       ${l.notizen ? `<button class="pill wide" id="kbtn" style="margin:var(--gap) 0 0" onclick="kiStarten(${id})">✨ ${l.ki ? 'Neu zusammenfassen' : 'Zusammenfassen'}</button>` : ''}</div>
     <div class="label">Verlauf</div>
-    ${ausgang().filter(n => n.id === l.id).map(n => `<div class="card wartet">⏳ Noch nicht gesendet, geht raus, sobald Verbindung da ist<br>${esc(new Date(n.zeit).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' }))}${konto.name ? ' ' + esc(konto.name) : ''}: ${esc(n.notiz)}</div>`).join('')}
+    ${ausgang().filter(n => n.id === l.id).map(n => `<div class="card wartet">⏳ Noch nicht gesendet, geht raus, sobald Verbindung da ist<br>${esc(new Date(n.zeit).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' }))}${konto.name ? ' ' + esc(konto.name) : ''}: ${esc(
+      [n.notiz, n.status && 'Status ' + n.status, n.naechster !== undefined && (n.naechster ? 'Termin ' + datumKurz(n.naechster) : 'Termin entfernt')].filter(Boolean).join(' · '))}</div>`).join('')}
     <div class="card verlauf">${l.notizen ? esc(l.notizen) : '<span class="muted">Noch keine Notizen.</span>'}</div>
     <div class="label">Fotos</div>
     <div class="card" id="fotos">${fotosHtml(l)}</div>
@@ -578,12 +579,13 @@ async function setze(id, aend) {
   const l = leads.find(x => x.id === id); if (!l) return;
   const alt = { ...l };
   if (aend.naechster !== undefined) { clearTimeout(termin[id]?.uhr); delete termin[id]; }
-  Object.assign(l, aend); leadNeu(id); render();
-  try {
-    Object.assign(l, (await api('speichern', { id, ...aend })).lead);
-    if (aend.status) aend.status === 'Nicht erreicht' ? waFrage[id] = true : delete waFrage[id];
-    toast(aend.status ? `Status: ${aend.status}` : 'Gespeichert');
-  } catch (e) { Object.assign(l, alt); toast(e.message); }
+  Object.assign(l, aend);
+  if (aend.status) aend.status === 'Nicht erreicht' ? waFrage[id] = true : delete waFrage[id];
+  leadNeu(id); render();
+  const r = await inAusgang(id, aend);
+  if (r === true) toast(aend.status ? `Status: ${aend.status}` : 'Gespeichert');
+  else if (r === 'wartet') toast(`${aend.status ? 'Status ' + aend.status : 'Änderung'} ist auf dem Handy gesichert und geht raus, sobald du online bist.`);
+  else Object.assign(l, alt);   // vom Skript abgelehnt, der Grund kam schon als Meldung
   leadNeu(id); render();
 }
 // Termin: iOS meldet schon beim Tippen im Kalender jede Änderung. Deshalb das Fenster nicht neu zeichnen
@@ -598,22 +600,17 @@ function terminSetzen(id, wert) {
   t.uhr = setTimeout(async () => {
     delete termin[id];
     const jetzt = () => leads.find(x => x.id === id);   // Liste kann inzwischen neu geladen sein
-    try {
-      const neu = (await api('speichern', { id, naechster: wert })).lead;
-      if (jetzt()?.naechster === wert) Object.assign(jetzt(), neu);
-      toast(wert ? `Melden am ${datumKurz(wert)}` : 'Termin entfernt');
-    } catch (e) {
-      if (jetzt()?.naechster === wert) { jetzt().naechster = t.alt; leadNeu(id); }
-      toast(e.message);
-    }
+    const r = await inAusgang(id, { naechster: wert });
+    if (r === true) toast(wert ? `Melden am ${datumKurz(wert)}` : 'Termin entfernt');
+    else if (r === 'wartet') toast('Termin ist auf dem Handy gesichert und geht raus, sobald du online bist.');
+    else if (jetzt()?.naechster === wert) { jetzt().naechster = t.alt; leadNeu(id); }
     render();
   }, 1000);
 }
 // Tipp auf „WhatsApp“ in der Frage: WhatsApp geht mit dem fertigen Text auf, im Verlauf landet ein Vermerk
 function waGeschickt(id) {
   delete waFrage[id]; leadNeu(id);
-  api('speichern', { id, notiz: 'Nicht erreicht, per WhatsApp angeschrieben' })
-    .then(j => { Object.assign(leads.find(x => x.id === id) || {}, j.lead); leadNeu(id); }).catch(e => toast(e.message));
+  inAusgang(id, { notiz: 'Nicht erreicht, per WhatsApp angeschrieben' }).then(() => leadNeu(id));
 }
 function uebernehmen(id) {
   const v = vorschlag[id]; delete vorschlag[id];
@@ -629,38 +626,55 @@ function entwurfMerken(id) {
   if (t.trim()) e[id] = t; else delete e[id];
   merke('jdv-entwurf', e);
 }
-async function notizSenden(id, notiz) {
-  const n = { id, notiz, zeit: new Date().toISOString(), nid: Date.now().toString(36) + Math.random().toString(36).slice(2, 8) };
+// Alles, was am Lead gespeichert wird (Notiz, Status, Termin), geht über den Ausgang
+function inAusgang(id, aend) {
+  const n = { id, ...aend, zeit: new Date().toISOString(), nid: Date.now().toString(36) + Math.random().toString(36).slice(2, 8) };
   merke('jdv-ausgang', [...ausgang(), n]);
+  return ausgangSenden(n);
+}
+// Nach dem Laden aus der Tabelle: was noch im Ausgang liegt, gilt in der App schon
+function ausgangDrueber() {
+  ausgang().forEach(n => { const l = leads.find(x => x.id === n.id); if (!l) return;
+    if (n.status) l.status = n.status;
+    if (n.naechster !== undefined) l.naechster = n.naechster; });
+}
+async function notizSenden(id, notiz) {
   const e = lies('jdv-entwurf', {}); delete e[id]; merke('jdv-entwurf', e);
+  const senden = inAusgang(id, { notiz });
   leadNeu(id);
-  if (await ausgangSenden(n)) { toast('Notiz gespeichert'); kiStarten(id); }
-  else if (ausgang().some(x => x.nid === n.nid)) toast('Keine Verbindung. Die Notiz ist auf dem Handy gesichert und geht raus, sobald du wieder online bist.');
+  const r = await senden;
+  if (r === true) { toast('Notiz gespeichert'); kiStarten(id); }
+  else if (r === 'wartet') toast('Keine Verbindung. Die Notiz ist auf dem Handy gesichert und geht raus, sobald du wieder online bist.');
   leadNeu(id); render();
 }
 const sendetGerade = new Set();
+// Ergebnis: true = beim Skript, 'wartet' = bleibt im Ausgang (keine Verbindung), false = vom Skript abgelehnt
 async function ausgangSenden(n) {
-  if (sendetGerade.has(n.nid)) return false;
+  if (sendetGerade.has(n.nid)) return 'wartet';
   sendetGerade.add(n.nid);
   try {
-    const j = await api('speichern', { id: n.id, notiz: n.notiz, zeit: n.zeit, nid: n.nid });
+    const j = await api('speichern', n);   // id, notiz/status/naechster, zeit, nid
     merke('jdv-ausgang', ausgang().filter(x => x.nid !== n.nid));
     Object.assign(leads.find(x => x.id === n.id) || {}, j.lead);
+    ausgangDrueber();   // was danach noch wartet, gilt weiter
     return true;
   } catch (e) {
-    if (e.code === 'weg') {   // den Lead gibt es nicht mehr: Text nicht wegwerfen, sondern sagen
+    // Vom Skript abgelehnt (Lead weg, Status unbekannt …): nicht ewig wiederholen, sondern sagen. Ohne Verbindung,
+    // bei unklarer Antwort oder abgelaufener Anmeldung (pw) bleibt die Änderung im Ausgang.
+    if (['weg', 'status', 'datum', 'spalte'].includes(e.code)) {
       merke('jdv-ausgang', ausgang().filter(x => x.nid !== n.nid));
-      toast('Notiz nicht gespeichert, den Lead gibt es nicht mehr: ' + n.notiz.slice(0, 80));
+      toast('Nicht gespeichert: ' + e.message + (n.notiz ? ' Notiz: ' + n.notiz.slice(0, 80) : ''));
+      return false;
     }
-    return false;
+    return 'wartet';
   } finally { sendetGerade.delete(n.nid); }
 }
 async function ausgangNachsenden() {
   if (!angemeldet() || !ausgang().length) return;
   let n = 0;
-  for (const x of ausgang()) if (await ausgangSenden(x)) n++;
+  for (const x of ausgang()) if (await ausgangSenden(x) === true) n++;
   if (!n) return;
-  toast(n === 1 ? 'Gesicherte Notiz nachgeschickt' : `${n} gesicherte Notizen nachgeschickt`);
+  toast(n === 1 ? 'Gesicherte Änderung nachgeschickt' : `${n} gesicherte Änderungen nachgeschickt`);
   if (offen) leadNeu(offen);
   render();
 }
