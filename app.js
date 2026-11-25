@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '47';
+const VERSION = '48';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 // Seit 25.11.2026 nur noch diese fünf (Farben wie in der Lead-Tabelle: gelb, blau, grün, rot)
@@ -188,7 +188,7 @@ function renderAlle() {
 // Aufbau wie in der Stempeluhr: Themenliste, jedes Thema öffnet ein eigenes Fenster
 const NACHRICHTEN = {
   WA_VORLAGE: { titel: 'WhatsApp: Nicht erreicht', kurz: 'Nicht erreicht', icon: '💬', sub: 'Wenn du jemanden nicht erreichst', felder: ['{Name}', '{Wunsch}', '{Ich}'] },
-  TEXT_ANGEBOT_WA: { titel: 'WhatsApp: Angebot', kurz: 'Angebot', icon: '📄', sub: 'Text mit Link zum PDF im Chat', felder: ['{Name}', '{Nr}', '{Ich}', '{Link}'], pdf: true },
+  TEXT_ANGEBOT_WA: { titel: 'WhatsApp: Angebot', kurz: 'Angebot', icon: '📄', sub: 'Text zum PDF im Chat', felder: ['{Name}', '{Nr}', '{Ich}'], pdf: true },
   TEXT_MAIL: { titel: 'Mail: Angebot', kurz: 'Angebotsmail', icon: '✉️', sub: 'Betreff und Text, PDF im Anhang', felder: ['{Name}', '{Nr}', '{Ich}'], mail: true },
 };
 function setupThemen() {
@@ -438,7 +438,7 @@ function textVorschau(k) {
       <div class="betreff">${esc(fuelle($('#tbetreff').value.trim(), BEISPIEL)) || '<i>Kein Betreff</i>'}</div>
       <div class="mailtext">${esc(text)}</div><span class="anhang">📄 ${pdf}</span></div>`
     : `<div class="wachat"><div class="wakopf"><span class="ava">K</span><b>Kevin Becker</b></div>
-      <div class="blase"><span class="watext">${n.pdf ? waFormat(text.includes('{Link}') ? text : text + '\n\n{Link}').replaceAll('{Link}', '<span class="walink">https://drive.google.com/file/d/…</span>') : waFormat(text)}</span><span class="zeit">${pad(d.getHours())}:${pad(d.getMinutes())} <span class="haken">✓✓</span></span></div></div>`;
+      <div class="blase">${n.pdf ? `<div class="wadok"><span class="pdf">PDF</span><span><b>${pdf}</b><small>1 Seite · PDF</small></span></div>` : ''}<span class="watext">${waFormat(text.replaceAll('{Link}', '').trim())}</span><span class="zeit">${pad(d.getHours())}:${pad(d.getMinutes())} <span class="haken">✓✓</span></span></div></div>`;
 }
 function baustein(f, k) {
   const t = textFeld || $('#ttext');
@@ -771,10 +771,8 @@ function angebotKarte(l) {
   const id = js(l.id), a = l.angebot;
   return `<div class="card" id="angebotkarte">
       <p class="angebotzeile"><span><b>${esc(a.nr || 'Angebot')}</b> · ${euro(a.summe)}</span><span class="muted">${{ accepted: 'angenommen', rejected: 'abgelehnt' }[a.status] || (a.geaendert ? 'geändert ' + datumKurz(a.geaendert) : a.datum ? 'vom ' + datumKurz(a.datum) : '')}</span></p>
-      ${a.pdf ? `<div class="drei">${l.wa ? `<a class="pill" href="${esc(waLink(l, angebotWaText(l)))}"${WA_ZIEL} onclick="angebotGeschickt(${id}, 'WhatsApp')">${ICON.wa}WhatsApp</a>`
-        : `<button class="pill" onclick="angebotWhatsApp(${id})">${ICON.wa}WhatsApp</button>`}<button class="pill" onclick="angebotMail(${id}, this)">✉️ Mail</button><a class="pill" href="${esc(a.pdf)}" target="_blank" rel="noopener">📄 PDF</a></div>
-      <p class="hint" style="margin:var(--gap) 0 0">WhatsApp öffnet direkt den Chat mit ${esc((l.name || 'dem Kunden').split(' ')[0])}, Text und Link zum PDF stehen schon drin. Lieber als Datei: „PDF als Datei teilen“ und im Teilen-Menü den Kunden wählen.</p>
-      <button class="pill wide" style="margin:var(--gap) 0 0" onclick="angebotWhatsApp(${id})">📎 PDF als Datei teilen</button>`
+      ${a.pdf ? `<div class="drei"><button class="pill" onclick="angebotWhatsApp(${id})">${ICON.wa}WhatsApp</button><button class="pill" onclick="angebotMail(${id}, this)">✉️ Mail</button><a class="pill" href="${esc(a.pdf)}" target="_blank" rel="noopener">📄 PDF</a></div>
+      <p class="hint" style="margin:var(--gap) 0 0">WhatsApp: Das PDF und der Text gehen zusammen raus. Im Teilen-Menü WhatsApp Business wählen, dann ${esc((l.name || 'den Kunden').split(' ')[0])}, steht meist ganz oben.</p>`
         : `<a class="pill wide" style="margin:0" href="${esc(a.link)}" target="_blank" rel="noopener">Das PDF fehlt noch. In Lexware öffnen ↗</a>`}
       <button class="pill wide" style="margin:var(--gap) 0 0" onclick="angebotAendern(${id}, this)">✏️ Angebot ändern</button>
     </div>`;
@@ -840,15 +838,21 @@ async function pdfLaden(id) {
     if (neu && offen === id) toast(`Angebot ${j.nr} wurde in Lexware geändert. Die neue Fassung ist geladen.`);
   } catch (e) { delete pdfCache[id]; if (offen === id) toast(e.message); }
 }
-// WhatsApp-Knopf: Chat des Kunden mit dem Text aus dem Setup und dem Link zum PDF im Drive (eine Datei kann eine Webseite
-// nicht direkt in einen bestimmten Chat legen). {Link} im Text setzt den Link an diese Stelle, sonst kommt er ans Ende.
+// Nur wenn das Gerät keine Dateien teilen kann: Chat des Kunden mit Text und Link zum PDF im Drive.
+// {Link} im Text setzt den Link an diese Stelle, sonst kommt er ans Ende.
 const angebotWaText = l => { const t = fuelle(texte.TEXT_ANGEBOT_WA, l), link = l.angebot?.pdf || ''; return t.includes('{Link}') ? t.replaceAll('{Link}', link) : t + (link ? '\n\n' + link : ''); };
-// Als Datei: das PDF selbst geht über das Teilen-Menü, dort den Kunden wählen
+// WhatsApp: das PDF selbst geht mit dem Text über das Teilen-Menü in den Chat (Webseiten können keinen bestimmten Chat
+// mit Datei öffnen, deshalb dort den Kunden wählen). Kann das Gerät keine Dateien teilen, öffnet sich der Chat mit Link.
 async function angebotWhatsApp(id) {
   const l = leads.find(x => x.id === id), a = l?.angebot, p = pdfCache[id];
   if (!a) return;
   if (!p?.datei || p.nr !== a.nr) { toast('Das PDF lädt noch. Tipp gleich nochmal.'); return p && !p.datei ? null : pdfLaden(id); }
-  if (!navigator.canShare?.({ files: [p.datei] })) return toast('Dieser Browser kann keine Dateien teilen. Nimm den Knopf WhatsApp, der schickt den Link zum PDF.');
+  if (!navigator.canShare?.({ files: [p.datei] })) {
+    if (!l.wa) return toast('Dieses Gerät kann keine Dateien teilen, und zum Kunden gibt es keine WhatsApp-Nummer.');
+    toast('Dieses Gerät kann keine Dateien teilen, deshalb geht der Link zum PDF mit.');
+    MOBIL ? (location.href = waLink(l, angebotWaText(l))) : open(waLink(l, angebotWaText(l)), '_blank', 'noopener');
+    return angebotGeschickt(id, 'WhatsApp');
+  }
   try { await navigator.share({ files: [p.datei], text: fuelle(texte.TEXT_ANGEBOT_WA, l).replaceAll('{Link}', '').trim() }); }
   catch (e) { return e.name === 'AbortError' ? null : toast('Teilen hat nicht geklappt.'); }
   angebotGeschickt(id, 'WhatsApp');
