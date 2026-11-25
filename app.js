@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '42';
+const VERSION = '43';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 // Seit 25.11.2026 nur noch diese fünf (Farben wie in der Lead-Tabelle: gelb, blau, grün, rot)
@@ -1213,5 +1213,14 @@ render();
 laden(true);
 setInterval(() => { if (!document.hidden) laden(true); }, 60000);
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js');
+// Neue Version online? Beim Zurückkommen in die App prüfen und neu laden. Am Handy bleibt die App sonst tagelang im
+// Hintergrund offen und zeigt die alte Version. Nicht, solange ein Fenster (Lead, Angebot, Setup) offen ist.
+document.addEventListener('visibilitychange', async () => {
+  if (document.hidden || DEMO) return;
+  try {
+    const v = ((await (await fetch('index.html', { cache: 'no-store' })).text()).match(/app\.js\?v=(\d+)/) || [])[1];
+    if (v && v !== VERSION && $('#sheet').hidden) location.reload();
+  } catch (e) { }
+});
 // Wer Benachrichtigungen schon erlaubt hat, meldet sein Gerät still neu an (das Abo kann sich ändern)
 if (angemeldet() && pushOk() && Notification.permission === 'granted') pushEin(true);
