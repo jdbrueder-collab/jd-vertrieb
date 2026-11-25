@@ -107,7 +107,11 @@ Neue Leads, die Meta über die Kopfzeile schiebt, zeigt die App sofort. Die Zeil
 
 ## Wenn das Skript geändert wird
 
-Nach jeder Änderung an `vertrieb.gs` bei Google: *Bereitstellen → Bereitstellungen verwalten → Stift → Version: Neue Version → Bereitstellen*. Die URL bleibt gleich.
+Seit 25.11.2026 per clasp vom Mac aus: `apps-script/hochladen.sh "Beschreibung"` lädt `vertrieb.gs` (im Projekt „Code“), `sortieren.gs` („Sortieren“) und `appsscript.json` ins Skript-Projekt der Tabelle „Leads Nov 2026“ und setzt die bestehende Web-App-Bereitstellung auf eine neue Version. Die URL in `config.js` bleibt gleich. Voraussetzungen: clasp (`npm i -g @google/clasp`), `clasp login` als jd.brueder@gmail.com, in dessen Apps-Script-Einstellungen „Google Apps Script API“ an. Achtung: Hochladen ersetzt alle Dateien im Projekt, Änderungen direkt im Editor gehen dabei verloren, deshalb nur hier im Repo ändern.
+
+Braucht eine Änderung neue Google-Berechtigungen (z. B. Mail, Drive), muss einmal jemand im Editor eine Funktion ausführen (z. B. `vertriebEinrichten`) und zustimmen.
+
+Ohne clasp von Hand: Code einfügen, dann *Bereitstellen → Bereitstellungen verwalten → Stift → Version: Neue Version → Bereitstellen*.
 
 ## Entwickeln
 
