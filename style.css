@@ -101,6 +101,8 @@ input:focus-visible,textarea:focus-visible{box-shadow:0 0 0 2px var(--accent)}
 .menge b{min-width:1.4em;text-align:center}
 .eigene>input{width:auto;flex:1;text-align:left}
 .eigene>#ep-preis{flex:0 0 5.5em;text-align:right}
+input.preis{width:6.4em;min-height:34px;padding:4px 8px;margin:2px 0;font-size:15px;text-align:right;border-radius:10px;border:1px dashed color-mix(in srgb,var(--accent) 60%,transparent)}
+.row s{margin-left:4px;opacity:.7}
 .menge>.prozent{width:3.6em;min-height:44px;text-align:right}
 .row.weg{display:none}
 .row:has(.prozent){flex-wrap:wrap;row-gap:var(--gap-s)}.row:has(.prozent)>span:first-child{flex:none}.row:has(.prozent)>.menge{margin-left:auto}

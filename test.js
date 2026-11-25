@@ -337,7 +337,7 @@ assert.strictEqual(w.post({ aktion: 'lexAngebot', pw, id: anna, posten: [{ artik
 w.lexware.anfragen.length = 0;
 w.lexware.naechste.push(null, null, { code: 429 });   // Profil aus dem Cache, Artikel und Kontakt normal, Angebot zu schnell: warten, nochmal
 r = w.post({ aktion: 'lexAngebot', pw, wer: 'David', id: anna, rabatt: 20, referenz: true, posten: [
-  { artikel: 'A1', menge: 2, preis: 1 },               // Preis aus der App zählt nicht, nur der aus Lexware
+  { artikel: 'A1', menge: 2 },                         // ohne eigenen Preis gilt der aus Lexware (geänderter Preis: Test weiter unten)
   { name: 'Lederpflege', menge: 1, preis: 59.5 }] });
 assert.ok(r.ok, r.fehler);
 const q = w.lexware.anfragen.filter((x) => x.pfad === '/v1/quotations?finalize=true').pop().body;
@@ -386,6 +386,17 @@ assert.strictEqual(w.post({ aktion: 'liste', pw }).leads.find((l) => l.id === an
 // zurück auf Q-1 für die Tests danach
 w.lexware.angebote = [{ id: 'Q-1', contactId: 'K-1', voucherNumber: 'AG0049', voucherStatus: 'open', totalAmount: 409.56, voucherDate: '2026-11-20T00:00:00.000+01:00' }];
 w.post({ aktion: 'lexDaten', pw, id: anna });
+// Preis im Angebot geändert (größeres Auto): gilt nur für diese Position, Artikel-id bleibt, netto genau auf 4 Stellen
+{
+  const n0 = w.lexware.anfragen.length;
+  const r3 = w.post({ aktion: 'lexAngebot', pw, id: anna, posten: [{ artikel: 'A1', menge: 1, preis: 300 }, { artikel: 'A4', menge: 1 }] });
+  assert.ok(r3.ok, r3.fehler);
+  const q3 = w.lexware.anfragen.slice(n0).filter((x) => x.pfad === '/v1/quotations?finalize=true').pop().body;
+  assert.strictEqual(JSON.stringify(q3.lineItems[0].unitPrice), '{"currency":"EUR","netAmount":252.1008,"taxRatePercentage":19}');
+  assert.strictEqual(q3.lineItems[0].id, 'A1');
+  assert.strictEqual(q3.lineItems[1].unitPrice.netAmount, 58);   // ohne eigenen Preis: wie in Lexware
+  assert.strictEqual(w.post({ aktion: 'lexAngebot', pw, id: anna, posten: [{ artikel: 'A1', menge: 1, preis: -5 }] }).code, 'preis');
+}
 // Angebot in der App ändern: Positionen und Rabatt aus Lexware laden, neue Fassung ersetzt die alte
 w.lexware.angebot = { introduction: 'Fahrzeug: Audi A6\nAls Referenzkunde erhalten Sie 20 % Rabatt.', totalPrice: { totalDiscountPercentage: 20, totalGrossAmount: 409.56 }, lineItems: [
   { id: 'A1', type: 'service', name: 'Interieur Aufbereitung', quantity: 2, unitPrice: { netAmount: 190, grossAmount: 226.1, taxRatePercentage: 19 } },

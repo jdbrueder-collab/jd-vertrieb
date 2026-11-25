@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '44';
+const VERSION = '45';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 // Seit 25.11.2026 nur noch diese fünf (Farben wie in der Lead-Tabelle: gelb, blau, grün, rot)
@@ -893,7 +893,8 @@ async function nachziehen(knopf) {
 }
 
 // Angebotsseite im selben Fenster, gedacht fürs Telefonat: oben was im Angebot ist, darunter alle Artikel zum Suchen
-const angebotSumme = a => [...(a.artikel || []).filter(x => a.menge[x.id]).map(x => x.preis * a.menge[x.id]), ...a.eigene.map(x => x.preis * (x.menge || 1))].reduce((s, x) => s + x, 0);
+const preisVon = (a, x) => a.preis[x.id] ?? x.preis;
+const angebotSumme = a => [...(a.artikel || []).filter(x => a.menge[x.id]).map(x => preisVon(a, x) * a.menge[x.id]), ...a.eigene.map(x => x.preis * (x.menge || 1))].reduce((s, x) => s + x, 0);
 // Lexware lässt Angebote über die Schnittstelle nicht ändern. „Ändern“ lädt Positionen und Rabatt ins Angebots-Fenster,
 // daraus entsteht eine neue Fassung mit neuer Nummer. Die alte zählt in der Statistik nicht mehr.
 async function angebotAendern(id, knopf) {
@@ -907,15 +908,20 @@ async function angebotOeffnen(id, vorlage) {
   kundeSichern(id);
   const l = leads.find(x => x.id === id), ref = /referenz/i.test(wunsch(l));   // Aktion: 20 % für Referenzkunden
   offen = null;
-  const a = angebot = { id, artikel: lexArtikelCache, menge: {}, eigene: [], rabatt: ref ? 20 : 0, referenz: ref, suche: '' };
+  const a = angebot = { id, artikel: lexArtikelCache, menge: {}, preis: {}, eigene: [], rabatt: ref ? 20 : 0, referenz: ref, suche: '' };   // preis: nur für dieses Angebot geändert
   if (vorlage) Object.assign(a, { rabatt: vorlage.rabatt, referenz: vorlage.referenz, ersetzt: vorlage.nr, posten: vorlage.posten });
   angebotZeichnen(); $('.panel').scrollTop = 0;
   try { lexArtikelCache = (await api('lexArtikel')).artikel.filter(x => !x.aus); } catch (e) { a.fehler = e.message; }
   if (angebot !== a) return;
   a.artikel = lexArtikelCache;
   // Positionen der alten Fassung: Artikel aus der Liste bekommen ihre Menge, alles andere wird eigene Position
-  (a.posten || []).forEach(p => { const x = p.artikel && (a.artikel || []).find(x => x.id === p.artikel);
-    if (x) a.menge[x.id] = (a.menge[x.id] || 0) + p.menge; else a.eigene.push({ name: p.name, menge: p.menge, preis: p.preis }); });
+  // Ein im Angebot geänderter Preis bleibt dabei erhalten
+  (a.posten || []).forEach(p => {
+    const x = p.artikel && (a.artikel || []).find(x => x.id === p.artikel), preis = Math.abs(p.preis - x?.preis) < 0.01 ? undefined : p.preis;
+    if (!x || (a.menge[x.id] && preis !== a.preis[x.id])) return a.eigene.push({ name: p.name, menge: p.menge, preis: p.preis });
+    a.menge[x.id] = (a.menge[x.id] || 0) + p.menge;
+    if (preis !== undefined) a.preis[x.id] = preis;
+  });
   delete a.posten; angebotZeichnen();
 }
 function angebotZeichnen() {
@@ -927,7 +933,9 @@ function angebotZeichnen() {
 function angebotHtml(a) {
   const l = leads.find(x => x.id === a.id) || {}, summe = angebotSumme(a), gewaehlt = (a.artikel || []).filter(x => a.menge[x.id]);
   const einheit = x => ['Pauschal', 'Stück', 'Aufwand'].includes(x.einheit) ? '' : ' / ' + esc(x.einheit);
-  const zeile = (x, i, liste) => `<div class="row${liste && a.suche && !x.name.toLowerCase().includes(a.suche) ? ' weg' : ''}"><span>${esc(x.name)}<br><span class="muted small">${euro(x.preis)}${einheit(x)}</span></span><span class="menge">${a.menge[x.id] ? `<button class="pill sm" aria-label="${esc(x.name)} weniger" onclick="angebotMenge(${i}, -1)">−</button><b>${a.menge[x.id]}</b>` : ''}<button class="pill sm" aria-label="${esc(x.name)} dazu" onclick="angebotMenge(${i}, 1)">+</button></span></div>`;
+  // Im Angebot ist der Preis ein Feld: antippen und ändern, gilt nur für dieses Angebot (Lexware-Artikel bleibt, wie er ist)
+  const zeile = (x, i, liste) => `<div class="row${liste && a.suche && !x.name.toLowerCase().includes(a.suche) ? ' weg' : ''}"><span>${esc(x.name)}<br><span class="muted small">${liste ? euro(x.preis)
+    : `${preisFeld(preisVon(a, x), `angebotPreis(${i}, this.value)`, x.name)}${a.preis[x.id] != null ? ` <s>${euro(x.preis)}</s>` : ''}`}${einheit(x)}</span></span><span class="menge">${a.menge[x.id] ? `<button class="pill sm" aria-label="${esc(x.name)} weniger" onclick="angebotMenge(${i}, -1)">−</button><b>${a.menge[x.id]}</b>` : ''}<button class="pill sm" aria-label="${esc(x.name)} dazu" onclick="angebotMenge(${i}, 1)">+</button></span></div>`;
   const artikel = !a.artikel ? `<div class="card muted">${esc(a.fehler || 'Artikel werden aus Lexware geladen…')}</div>`
     : !a.artikel.length ? '<div class="card muted">In Lexware sind noch keine Artikel angelegt. Bis dahin gehen eigene Positionen.</div>'
     : `<label class="search">${ICON.search}<input id="a-suche" type="search" placeholder="Artikel suchen" value="${esc(a.suche)}" oninput="angebotFilter(this.value)" aria-label="Artikel suchen"></label>
@@ -939,17 +947,30 @@ function angebotHtml(a) {
     <div class="label">Im Angebot</div>
     <div class="group">${leer ? '<div class="row muted">Noch nichts. Tipp unten bei den Artikeln auf +.</div>' : ''}
       ${gewaehlt.map(x => zeile(x, a.artikel.indexOf(x))).join('')}
-      ${a.eigene.map((x, i) => `<div class="row"><span>${x.menge > 1 ? String(x.menge).replace('.', ',') + '× ' : ''}${esc(x.name)}<br><span class="muted small">${euro(x.preis)}${x.menge > 1 ? ' je Stück' : ''}</span></span><span class="menge"><button class="pill sm" aria-label="${esc(x.name)} entfernen" onclick="angebot.eigene.splice(${i}, 1); angebotZeichnen()">✕</button></span></div>`).join('')}
+      ${a.eigene.map((x, i) => `<div class="row"><span>${x.menge > 1 ? String(x.menge).replace('.', ',') + '× ' : ''}${esc(x.name)}<br><span class="muted small">${preisFeld(x.preis, `eigenePreis(${i}, this.value)`, x.name)}${x.menge > 1 ? ' je Stück' : ''}</span></span><span class="menge"><button class="pill sm" aria-label="${esc(x.name)} entfernen" onclick="angebot.eigene.splice(${i}, 1); angebotZeichnen()">✕</button></span></div>`).join('')}
       <div class="row"><span>Rabatt</span><span class="menge"><button class="pill sm${a.referenz ? ' sel' : ''}" aria-pressed="${a.referenz}" onclick="angebotRabatt(${a.referenz ? 0 : 20}, ${!a.referenz})">Referenz 20 %</button><input id="a-rabatt" class="prozent" inputmode="decimal" value="${a.rabatt ? String(a.rabatt).replace('.', ',') : ''}" placeholder="0" onchange="angebotRabatt(this.value, false)" aria-label="Rabatt in Prozent">%</span></div>
       ${a.rabatt && !leer ? `<div class="row muted"><span>Ohne Rabatt</span><span>${euro(summe)}</span></div>` : ''}
       <div class="row"><b>Gesamt inkl. MwSt.</b><b>${euro(summe * (1 - a.rabatt / 100))}</b></div></div>
     <div class="label">Artikel aus Lexware</div>${artikel}
     <div class="label">Eigene Position</div>
     <div class="group"><div class="row eigene"><input id="ep-name" placeholder="z. B. Lederpflege" maxlength="255" aria-label="Bezeichnung"><input id="ep-preis" inputmode="decimal" placeholder="€" aria-label="Preis in Euro"><button class="pill sm" aria-label="Position hinzufügen" onclick="eigeneDazu()">+</button></div></div>
-    <p class="hint">Preise sind Endpreise, so wie der Kunde sie zahlt.</p>
+    <p class="hint">Preise sind Endpreise, so wie der Kunde sie zahlt. Im Angebot kannst du jeden Preis antippen und ändern, z. B. für ein größeres Auto. Das gilt nur für dieses Angebot, in Lexware bleibt der Artikel, wie er ist.</p>
     <div class="leadfuss"><button class="big gold" id="abtn" onclick="angebotAnlegen()">${a.ersetzt ? 'Neue Fassung erstellen' : 'Angebot erstellen'}${leer ? '' : ' · ' + euro(summe * (1 - a.rabatt / 100))}</button></div>`;
 }
 // Suche ohne Neuzeichnen, damit die Tastatur offen bleibt
+const preisFeld = (n, aendern, name) => `<input class="preis" inputmode="decimal" value="${(Number(n) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}" onfocus="this.select()" onchange="${aendern}" aria-label="Preis für ${esc(name)} ändern"> €`;
+function preisLesen(v) {
+  const n = Math.round(zahl(v) * 100) / 100;
+  if (!(n >= 0 && n < 1e6)) { toast('Der Preis sieht nicht richtig aus.'); angebotZeichnen(); return null; }
+  return n;
+}
+function angebotPreis(i, v) {
+  const x = angebot.artikel[i];
+  if (!String(v).trim()) delete angebot.preis[x.id];   // leer = wieder der Preis aus Lexware
+  else { const n = preisLesen(v); if (n === null) return; if (Math.abs(n - x.preis) < 0.005) delete angebot.preis[x.id]; else angebot.preis[x.id] = n; }
+  angebotZeichnen();
+}
+function eigenePreis(i, v) { const n = preisLesen(v); if (n !== null) { angebot.eigene[i].preis = n; angebotZeichnen(); } }
 function angebotFilter(v) {
   angebot.suche = v.trim().toLowerCase();
   document.querySelectorAll('#artikelliste .row').forEach((r, i) => r.classList.toggle('weg', !!angebot.suche && !angebot.artikel[i].name.toLowerCase().includes(angebot.suche)));
@@ -958,7 +979,7 @@ function angebotMenge(i, d) {
   const x = angebot.artikel[i];
   angebot.menge[x.id] = Math.max(0, (angebot.menge[x.id] || 0) + d); angebotZeichnen();
 }
-const zahl = t => Number(String(t).trim().includes(',') ? String(t).trim().replace(/\./g, '').replace(',', '.') : String(t).trim());   // 1.299,50 oder 54.5
+const zahl = t => { const v = String(t).trim().replace(/\s|€/g, ''); return Number(v.includes(',') || /^\d{1,3}(\.\d{3})+$/.test(v) ? v.replace(/\./g, '').replace(',', '.') : v); };   // 1.299,50 · 1.299 · 54.5
 function angebotRabatt(v, referenz) {
   const n = zahl(v || 0);
   if (!(n >= 0 && n <= 100)) { toast('Rabatt zwischen 0 und 100 %.'); return angebotZeichnen(); }
@@ -973,7 +994,7 @@ function eigeneDazu() {
 async function angebotAnlegen() {
   if (($('#ep-name').value.trim() || $('#ep-preis').value.trim()) && !eigeneDazu()) return;   // getippte Position nicht vergessen
   const a = angebot, knopf = $('#abtn');
-  const posten = [...(a.artikel || []).filter(x => a.menge[x.id]).map(x => ({ artikel: x.id, menge: a.menge[x.id] })), ...a.eigene];
+  const posten = [...(a.artikel || []).filter(x => a.menge[x.id]).map(x => ({ artikel: x.id, menge: a.menge[x.id], ...(a.preis[x.id] != null ? { preis: a.preis[x.id] } : {}) })), ...a.eigene];
   if (!posten.length) return toast('Wähl mindestens eine Leistung aus.');
   knopf.disabled = true; knopf.textContent = 'Wird erstellt, dauert ein paar Sekunden…';
   try {
@@ -1224,7 +1245,7 @@ function demoApi(aktion, d) {
     }
     if (aktion === 'lexAngebot') {
       const art = Object.fromEntries(artikel.map(a => [a.id, a]));
-      const summe = d.posten.reduce((s, x) => s + x.menge * (x.artikel ? art[x.artikel].preis : x.preis), 0) * (1 - (d.rabatt || 0) / 100);
+      const summe = d.posten.reduce((s, x) => s + x.menge * (x.preis ?? art[x.artikel].preis), 0) * (1 - (d.rabatt || 0) / 100);
       l.lex = 'demo'; l.angebot = { nr: 'AG' + String(50 + Math.floor(Math.random() * 50)).padStart(4, '0'), summe, pdf: 'https://example.com/angebot.pdf', link: 'https://app.lexware.de/', datum: heute() };
       vermerk(`Angebot ${l.angebot.nr} erstellt (${euro(summe)}${d.rabatt ? `, ${d.rabatt} % Rabatt` : ''}): ${d.posten.map(x => (x.menge === 1 ? '' : x.menge + '× ') + (x.artikel ? art[x.artikel].name : x.name)).join(', ')}`);
       return ok({ lead: kopie(l), lex: 'demo', angebot: l.angebot, pdf64: btoa('%PDF-1.4 Demo') });

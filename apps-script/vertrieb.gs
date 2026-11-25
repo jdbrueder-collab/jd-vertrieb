@@ -700,14 +700,18 @@ function lexAngebot(d) {
     if (!(menge > 0 && menge <= 1000)) return null;
     const a = x.artikel && artikel[x.artikel];
     if (x.artikel && !a) throw fehler('artikel', 'Ein Artikel ist in Lexware nicht mehr da. Öffne das Angebot neu.');
+    // Netto auf 4 Stellen, damit der Endpreis auch nach der Umrechnung genau stimmt
+    const netto = (brutto, steuer) => (p.ohneSteuer ? brutto : Math.round(brutto / (1 + steuer / 100) * 10000) / 10000);
     if (a) {
-      const pr = a.price || {};
-      return { a, name: String(a.title || '').trim().slice(0, 255), menge, einheit: a.unitName || 'Stück', steuer: p.ohneSteuer ? 0 : Number(pr.taxRate) || 0,
-        netto: pr.netPrice || 0, brutto: p.ohneSteuer ? pr.netPrice || 0 : lexBrutto(pr) };
+      const pr = a.price || {}, steuer = p.ohneSteuer ? 0 : Number(pr.taxRate) || 0, name = String(a.title || '').trim().slice(0, 255);
+      const eigen = x.preis != null && x.preis !== '' ? Math.round(Number(x.preis) * 100) / 100 : null;   // in der App nur für dieses Angebot geändert
+      if (eigen !== null && !(eigen >= 0 && eigen < 1e6)) throw fehler('preis', 'Der Preis für ' + name + ' sieht nicht richtig aus.');
+      if (eigen !== null) return { a, name, menge, einheit: a.unitName || 'Stück', steuer, brutto: eigen, netto: netto(eigen, steuer) };
+      return { a, name, menge, einheit: a.unitName || 'Stück', steuer, netto: pr.netPrice || 0, brutto: p.ohneSteuer ? pr.netPrice || 0 : lexBrutto(pr) };
     }
     const name = String(x.name || '').trim().slice(0, 255), brutto = Math.round(Number(x.preis) * 100) / 100, steuer = p.ohneSteuer ? 0 : 19;
     if (!name || !(brutto >= 0 && brutto < 1e6)) return null;
-    return { name, menge, einheit: 'Pauschal', steuer, brutto, netto: Math.round(brutto / (1 + steuer / 100) * 100) / 100 };
+    return { name, menge, einheit: 'Pauschal', steuer, brutto, netto: netto(brutto, steuer) };
   }).filter(Boolean);
   if (!posten.length) throw fehler('leer', 'Wähl mindestens eine Leistung aus.');
   const rabatt = Math.round(Math.min(100, Math.max(0, Number(d.rabatt) || 0)) * 100) / 100, rabattText = String(rabatt).replace('.', ',') + ' %';
