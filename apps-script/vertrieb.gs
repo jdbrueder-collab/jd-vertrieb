@@ -235,11 +235,19 @@ function speichern(d) {
       zelle('Termin').setValue(d.naechster ? new Date(d.naechster + 'T12:00:00') : '');
     }
     const wer = String(d.wer || '').trim() || 'Team';
-    const eintrag = d.ki ? 'KI: ' + d.ki : String(d.notiz || '').trim() && wer + ': ' + String(d.notiz).trim();
+    let eintrag = d.ki ? 'KI: ' + d.ki : String(d.notiz || '').trim() && wer + ': ' + String(d.notiz).trim();
+    // Notizen, die ohne Verbindung geschrieben wurden, schickt die App später nach: mit Kennung (nid), damit eine
+    // doppelt angekommene nicht zweimal im Verlauf landet, und mit der Zeit, zu der sie geschrieben wurde.
+    const nid = d.nid && 'NID_' + String(d.nid).slice(0, 40), cache = CacheService.getScriptCache();
+    if (nid && cache.get(nid)) eintrag = '';
+    const geschrieben = d.zeit ? new Date(d.zeit) : null;
+    const wann = geschrieben && !isNaN(geschrieben) && geschrieben <= Date.now() + 6e4 && Date.now() - geschrieben < 7 * 864e5
+      ? berlin(geschrieben, 'dd.MM.yy HH:mm') : jetzt();
     if (eintrag) {
       const n = zelle(t.notiz);
       const alt = String(n.getValue()).trim();
-      n.setValue((alt && !MUELL.has(alt) ? alt + '\n\n' : '') + jetzt() + ' ' + eintrag);
+      n.setValue((alt && !MUELL.has(alt) ? alt + '\n\n' : '') + wann + ' ' + eintrag);
+      if (nid) cache.put(nid, '1', 21600);   // 6 Stunden
     }
     SpreadsheetApp.flush();
     return { lead: leseZeile(t, zeile) };

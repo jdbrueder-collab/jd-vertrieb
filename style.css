@@ -137,6 +137,7 @@ textarea{display:block;width:100%;margin:0 0 var(--gap);min-height:110px;padding
 .ki{white-space:pre-wrap;line-height:1.45}
 .ki .wait{color:var(--mut)}
 .vorschlag{display:flex;align-items:center;justify-content:space-between;gap:var(--gap);margin-top:var(--gap);padding:10px 10px 10px 14px;border-radius:var(--r-sm);background:color-mix(in srgb,var(--accent) 18%,transparent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);font-size:15px}
+.wartet{border:1px dashed color-mix(in srgb,var(--near) 70%,transparent);color:var(--txt);font-size:15px;white-space:pre-wrap}
 .verlauf{white-space:pre-wrap;line-height:1.45;font-size:15px}
 .fotos{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:0 0 var(--gap)}
 .fotos img,.fotos span{display:grid;place-items:center;width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;background:var(--line)}

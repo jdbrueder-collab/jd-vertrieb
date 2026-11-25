@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '43';
+const VERSION = '44';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 // Seit 25.11.2026 nur noch diese fünf (Farben wie in der Lead-Tabelle: gelb, blau, grün, rot)
@@ -70,6 +70,7 @@ async function laden(still) {
     const neu = j.leads.filter(l => !vorher.has(l.id));
     if (stand && neu.length) { toast(neu.length === 1 ? `🔔 Neuer Lead: ${neu[0].name}` : `🔔 ${neu.length} neue Leads`); haptic(); }
     uebernimm(j); fehlerText = '';
+    ausgangNachsenden();   // was ohne Verbindung geschrieben wurde, jetzt nachschicken
   } catch (e) {
     if (e.code === 'pw') return abmelden(e.message);
     fehlerText = e.message; if (!still) toast(e.message);
@@ -517,7 +518,7 @@ function openLead(id, fokus) {
     kundeLaden(id).then(() => { const a = leads.find(x => x.id === id)?.angebot; if (a && (!frisch || pdfCache[id]?.nr !== a.nr)) pdfLaden(id); });
   }
   const entwurf = lies('jdv-entwurf', {});
-  if (entwurf[id]) { $('#notiz').value = entwurf[id]; delete entwurf[id]; merke('jdv-entwurf', entwurf); }
+  if (entwurf[id]) $('#notiz').value = entwurf[id];   // bleibt gemerkt, bis die Notiz gesendet ist
   if (fokus) setTimeout(() => $('#notiz')?.focus(), 300);
 }
 // Fenster neu zeichnen, ohne angefangene Notiz und Scrollposition zu verlieren
@@ -541,13 +542,14 @@ function leadHtml(l) {
     <div class="group"><div class="row"><label for="termin">Termin oder Rückruf</label><span class="datum"><input id="termin" type="date" value="${esc(l.naechster)}" onchange="terminSetzen(${id}, this.value)"><button class="pill sm" onclick="terminSetzen(${id}, '')" aria-label="Termin entfernen"${l.naechster ? '' : ' hidden'}>✕</button></span></div></div>
     ${lexAn ? kundeBlock(l) : ''}
     <div class="label">Neue Notiz</div>
-    <textarea id="notiz" placeholder="Wie lief das Gespräch? Was will der Kunde?"></textarea>
-    <p class="hint">🎙️ Tipp aufs Mikrofon der Tastatur und erzähl einfach. Beim Schließen wird die Notiz automatisch gespeichert.</p>
+    <textarea id="notiz" placeholder="Wie lief das Gespräch? Was will der Kunde?" oninput="entwurfMerken(${id})"></textarea>
+    <p class="hint">🎙️ Tipp aufs Mikrofon der Tastatur und erzähl einfach. Was du tippst, liegt sofort auf dem Handy, auch wenn die App zugeht. Beim Schließen wird die Notiz gespeichert, ohne Verbindung später nachgeschickt.</p>
     <button class="pill wide" id="nbtn" onclick="notizSpeichern(${id})">Notiz speichern</button>
     <div class="label">KI-Zusammenfassung</div>
     <div class="card"><div class="ki" id="ki">${l.ki ? esc(l.ki) : '<span class="muted">Noch keine. Sobald du eine Notiz speicherst, fasst Claude zusammen.</span>'}</div>${vor}
       ${l.notizen ? `<button class="pill wide" id="kbtn" style="margin:var(--gap) 0 0" onclick="kiStarten(${id})">✨ ${l.ki ? 'Neu zusammenfassen' : 'Zusammenfassen'}</button>` : ''}</div>
     <div class="label">Verlauf</div>
+    ${ausgang().filter(n => n.id === l.id).map(n => `<div class="card wartet">⏳ Noch nicht gesendet, geht raus, sobald Verbindung da ist<br>${esc(new Date(n.zeit).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' }))}${konto.name ? ' ' + esc(konto.name) : ''}: ${esc(n.notiz)}</div>`).join('')}
     <div class="card verlauf">${l.notizen ? esc(l.notizen) : '<span class="muted">Noch keine Notizen.</span>'}</div>
     <div class="label">Fotos</div>
     <div class="card" id="fotos">${fotosHtml(l)}</div>
@@ -617,18 +619,52 @@ function uebernehmen(id) {
   const v = vorschlag[id]; delete vorschlag[id];
   setze(id, v.naechster ? { status: v.status, naechster: v.naechster } : { status: v.status });
 }
-async function notizSenden(id, notiz) {
-  const l = leads.find(x => x.id === id);
-  try {
-    Object.assign(l, (await api('speichern', { id, notiz })).lead);
-    toast('Notiz gespeichert'); leadNeu(id); render();
-    kiStarten(id);
-  } catch (e) {
-    // Text nicht verlieren: zurück ins Feld oder als Entwurf am Lead merken
-    if (offen === id && !$('#notiz').value) { $('#notiz').value = notiz; toast(e.message); }
-    else { merke('jdv-entwurf', { ...lies('jdv-entwurf', {}), [id]: notiz }); toast('Notiz nicht gespeichert. Sie liegt als Entwurf im Lead.'); }
-  }
+// Notizen gehen nicht verloren: Beim Tippen liegt der Text als Entwurf auf dem Gerät (jdv-entwurf). Beim Senden kommt er
+// in den Ausgang (jdv-ausgang) und bleibt dort, bis das Skript ihn sicher hat. Ohne Verbindung schickt die App ihn nach:
+// beim Start, alle 60 Sekunden, beim Zurückkommen und sobald das Gerät wieder online ist. Die Kennung nid verhindert,
+// dass eine Notiz doppelt im Verlauf landet, zeit ist der Moment, in dem sie geschrieben wurde.
+const ausgang = () => lies('jdv-ausgang', []);
+function entwurfMerken(id) {
+  const e = lies('jdv-entwurf', {}), t = $('#notiz')?.value || '';
+  if (t.trim()) e[id] = t; else delete e[id];
+  merke('jdv-entwurf', e);
 }
+async function notizSenden(id, notiz) {
+  const n = { id, notiz, zeit: new Date().toISOString(), nid: Date.now().toString(36) + Math.random().toString(36).slice(2, 8) };
+  merke('jdv-ausgang', [...ausgang(), n]);
+  const e = lies('jdv-entwurf', {}); delete e[id]; merke('jdv-entwurf', e);
+  leadNeu(id);
+  if (await ausgangSenden(n)) { toast('Notiz gespeichert'); kiStarten(id); }
+  else if (ausgang().some(x => x.nid === n.nid)) toast('Keine Verbindung. Die Notiz ist auf dem Handy gesichert und geht raus, sobald du wieder online bist.');
+  leadNeu(id); render();
+}
+const sendetGerade = new Set();
+async function ausgangSenden(n) {
+  if (sendetGerade.has(n.nid)) return false;
+  sendetGerade.add(n.nid);
+  try {
+    const j = await api('speichern', { id: n.id, notiz: n.notiz, zeit: n.zeit, nid: n.nid });
+    merke('jdv-ausgang', ausgang().filter(x => x.nid !== n.nid));
+    Object.assign(leads.find(x => x.id === n.id) || {}, j.lead);
+    return true;
+  } catch (e) {
+    if (e.code === 'weg') {   // den Lead gibt es nicht mehr: Text nicht wegwerfen, sondern sagen
+      merke('jdv-ausgang', ausgang().filter(x => x.nid !== n.nid));
+      toast('Notiz nicht gespeichert, den Lead gibt es nicht mehr: ' + n.notiz.slice(0, 80));
+    }
+    return false;
+  } finally { sendetGerade.delete(n.nid); }
+}
+async function ausgangNachsenden() {
+  if (!angemeldet() || !ausgang().length) return;
+  let n = 0;
+  for (const x of ausgang()) if (await ausgangSenden(x)) n++;
+  if (!n) return;
+  toast(n === 1 ? 'Gesicherte Notiz nachgeschickt' : `${n} gesicherte Notizen nachgeschickt`);
+  if (offen) leadNeu(offen);
+  render();
+}
+addEventListener('online', ausgangNachsenden);
 function notizSpeichern(id) {
   const t = $('#notiz'), notiz = t.value.trim();
   if (!notiz) { toast('Schreib oder sprich erst eine Notiz.'); return t.focus(); }

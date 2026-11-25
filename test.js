@@ -605,6 +605,18 @@ w.metaFalsch(null);
   assert.strictEqual(['Termin', 'Angebot abgeschickt', 'Nicht erreicht', 'Unqualifiziert', ''].map((x) => sx.farbeFuerStatus_(x)).join(), '#93c47d,#9fc5e8,#ffd966,#e06666,#ffffff');
 }
 
+// Notiz ohne Verbindung geschrieben und später nachgeschickt: mit Kennung nur einmal im Verlauf, auch wenn sie doppelt ankommt
+{
+  const vorher = w.post({ aktion: 'liste', pw }).leads.find((l) => l.id === anna).notizen;
+  const n = { aktion: 'speichern', pw, wer: 'David', id: anna, notiz: 'Offline geschrieben: will Keramik', zeit: new Date(Date.now() - 36e5).toISOString(), nid: 'abc123' };
+  assert.ok(w.post(n).ok);
+  const r2 = w.post(n);   // Antwort ging verloren, App schickt nochmal
+  assert.ok(r2.ok);
+  assert.strictEqual(r2.lead.notizen.split('Offline geschrieben: will Keramik').length - 1, 1);
+  assert.ok(r2.lead.notizen.startsWith(vorher));
+  assert.ok(w.post({ ...n, nid: 'neu456', zeit: 'Quatsch' }).ok);   // kaputte Zeit: dann eben jetzt
+}
+
 // Sperre nach 10 Fehlversuchen
 for (let i = 0; i < 10; i++) w.post({ aktion: 'liste', pw: 'falsch' });
 assert.match(w.post({ aktion: 'liste', pw }).fehler, /Zu viele Fehlversuche/);
