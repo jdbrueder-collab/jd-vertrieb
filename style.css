@@ -102,6 +102,11 @@ input:focus-visible,textarea:focus-visible{box-shadow:0 0 0 2px var(--accent)}
 .menge b{min-width:1.4em;text-align:center}
 .eigene>input{width:auto;flex:1;text-align:left}
 .eigene>#ep-preis{flex:0 0 5.5em;text-align:right}
+.sortier{display:flex;flex-direction:column;gap:4px;flex:none}
+.sortier button{width:32px;height:26px;border-radius:9px;font-size:14px;line-height:1;border:1px solid rgba(255,255,255,.14);color:var(--txt)}
+.sortier button:disabled{opacity:.25}
+.sortier + span{min-width:0;flex:1;overflow-wrap:anywhere;-webkit-hyphens:auto;hyphens:auto}
+html.hell .sortier button{border-color:rgba(0,0,0,.12)}
 input.preis{width:6.4em;min-height:34px;padding:4px 8px;margin:2px 0;font-size:15px;text-align:right;border-radius:10px;border:1px dashed color-mix(in srgb,var(--accent) 60%,transparent)}
 .row s{margin-left:4px;opacity:.7}
 .menge>.prozent{width:3.6em;min-height:44px;text-align:right}
@@ -326,7 +331,7 @@ html.hell :is(.tab-hi,.statusmenu [aria-pressed=true]){color:#8a6a2c}
 }
 
 /* Kleine Handys (iPhone SE 1. Generation, schmale Android): etwas enger und kleiner, damit nichts abgeschnitten wird */
-@media (max-width:359px){
+@media (max-width:359px){ input.preis{width:5.2em}
   :root{--pad:12px;--gap:10px;--gap-s:6px}
   .phead h1{font-size:28px}
   .tile b{font-size:22px}.tile span{font-size:12px}

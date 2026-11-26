@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '48';
+const VERSION = '49';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 // Seit 25.11.2026 nur noch diese fünf (Farben wie in der Lead-Tabelle: gelb, blau, grün, rot)
@@ -931,7 +931,8 @@ async function angebotOeffnen(id, vorlage) {
   kundeSichern(id);
   const l = leads.find(x => x.id === id), ref = /referenz/i.test(wunsch(l));   // Aktion: 20 % für Referenzkunden
   offen = null;
-  const a = angebot = { id, artikel: lexArtikelCache, menge: {}, preis: {}, eigene: [], rabatt: ref ? 20 : 0, referenz: ref, suche: '' };   // preis: nur für dieses Angebot geändert
+  // preis: nur für dieses Angebot geändert; reihe: Reihenfolge der Positionen im Angebot ('a' + Artikel-id oder k einer eigenen)
+  const a = angebot = { id, artikel: lexArtikelCache, menge: {}, preis: {}, eigene: [], reihe: [], rabatt: ref ? 20 : 0, referenz: ref, suche: '' };
   if (vorlage) Object.assign(a, { rabatt: vorlage.rabatt, referenz: vorlage.referenz, ersetzt: vorlage.nr, posten: vorlage.posten });
   angebotZeichnen(); $('.panel').scrollTop = 0;
   try { lexArtikelCache = (await api('lexArtikel')).artikel.filter(x => !x.aus); } catch (e) { a.fehler = e.message; }
@@ -941,7 +942,8 @@ async function angebotOeffnen(id, vorlage) {
   // Ein im Angebot geänderter Preis bleibt dabei erhalten
   (a.posten || []).forEach(p => {
     const x = p.artikel && (a.artikel || []).find(x => x.id === p.artikel), preis = Math.abs(p.preis - x?.preis) < 0.01 ? undefined : p.preis;
-    if (!x || (a.menge[x.id] && preis !== a.preis[x.id])) return a.eigene.push({ name: p.name, menge: p.menge, preis: p.preis });
+    if (!x || (a.menge[x.id] && preis !== a.preis[x.id])) return eigeneRein({ name: p.name, menge: p.menge, preis: p.preis });
+    if (!a.menge[x.id]) a.reihe.push('a' + x.id);
     a.menge[x.id] = (a.menge[x.id] || 0) + p.menge;
     if (preis !== undefined) a.preis[x.id] = preis;
   });
@@ -954,23 +956,26 @@ function angebotZeichnen() {
   $('#ep-name').value = name; $('#ep-preis').value = preis; p.scrollTop = top;
 }
 function angebotHtml(a) {
-  const l = leads.find(x => x.id === a.id) || {}, summe = angebotSumme(a), gewaehlt = (a.artikel || []).filter(x => a.menge[x.id]);
+  const l = leads.find(x => x.id === a.id) || {}, summe = angebotSumme(a);
+  // Positionen in der eigenen Reihenfolge, mit ↑ ↓ zum Umsortieren
+  const drin = a.reihe.map(k => k[0] === 'a' ? { k, x: (a.artikel || []).find(x => 'a' + x.id === k) } : { k, e: a.eigene.find(e => e.k === k) }).filter(p => p.x || p.e);
+  const pfeile = (k, i) => drin.length < 2 ? '' : `<span class="sortier"><button aria-label="nach oben" onclick="verschieben('${k}', -1)"${i ? '' : ' disabled'}>↑</button><button aria-label="nach unten" onclick="verschieben('${k}', 1)"${i < drin.length - 1 ? '' : ' disabled'}>↓</button></span>`;
   const einheit = x => ['Pauschal', 'Stück', 'Aufwand'].includes(x.einheit) ? '' : ' / ' + esc(x.einheit);
   // Im Angebot ist der Preis ein Feld: antippen und ändern, gilt nur für dieses Angebot (Lexware-Artikel bleibt, wie er ist)
-  const zeile = (x, i, liste) => `<div class="row${liste && a.suche && !x.name.toLowerCase().includes(a.suche) ? ' weg' : ''}"><span>${esc(x.name)}<br><span class="muted small">${liste ? euro(x.preis)
+  const zeile = (x, i, liste, vorn = '') => `<div class="row${liste && a.suche && !x.name.toLowerCase().includes(a.suche) ? ' weg' : ''}">${vorn}<span>${esc(x.name)}<br><span class="muted small">${liste ? euro(x.preis)
     : `${preisFeld(preisVon(a, x), `angebotPreis(${i}, this.value)`, x.name)}${a.preis[x.id] != null ? ` <s>${euro(x.preis)}</s>` : ''}`}${einheit(x)}</span></span><span class="menge">${a.menge[x.id] ? `<button class="pill sm" aria-label="${esc(x.name)} weniger" onclick="angebotMenge(${i}, -1)">−</button><b>${a.menge[x.id]}</b>` : ''}<button class="pill sm" aria-label="${esc(x.name)} dazu" onclick="angebotMenge(${i}, 1)">+</button></span></div>`;
   const artikel = !a.artikel ? `<div class="card muted">${esc(a.fehler || 'Artikel werden aus Lexware geladen…')}</div>`
     : !a.artikel.length ? '<div class="card muted">In Lexware sind noch keine Artikel angelegt. Bis dahin gehen eigene Positionen.</div>'
     : `<label class="search">${ICON.search}<input id="a-suche" type="search" placeholder="Artikel suchen" value="${esc(a.suche)}" oninput="angebotFilter(this.value)" aria-label="Artikel suchen"></label>
       <div class="group" id="artikelliste">${a.artikel.map((x, i) => zeile(x, i, true)).join('')}</div>`;
-  const leer = !gewaehlt.length && !a.eigene.length;
+  const leer = !drin.length;
   return `<div class="sheet-head"><button class="pill" onclick="openLead(${js(a.id)})">Zurück</button><h2>${a.ersetzt ? 'Angebot ändern' : 'Angebot'}</h2><span></span></div>
     <p class="hint">${a.ersetzt ? `Ändere, was du willst. Lexware lässt ein Angebot nicht nachträglich ändern, deshalb entsteht eine neue Fassung mit neuer Nummer und neuem PDF. ${esc(a.ersetzt)} zählt dann nicht mehr, in Lexware kannst du es löschen.`
       : `Für ${esc(l.name || 'den Kunden')}. Es bekommt eine Nummer und ein PDF, danach schickst du es per WhatsApp oder Mail.`}</p>
     <div class="label">Im Angebot</div>
     <div class="group">${leer ? '<div class="row muted">Noch nichts. Tipp unten bei den Artikeln auf +.</div>' : ''}
-      ${gewaehlt.map(x => zeile(x, a.artikel.indexOf(x))).join('')}
-      ${a.eigene.map((x, i) => `<div class="row"><span>${x.menge > 1 ? String(x.menge).replace('.', ',') + '× ' : ''}${esc(x.name)}<br><span class="muted small">${preisFeld(x.preis, `eigenePreis(${i}, this.value)`, x.name)}${x.menge > 1 ? ' je Stück' : ''}</span></span><span class="menge"><button class="pill sm" aria-label="${esc(x.name)} entfernen" onclick="angebot.eigene.splice(${i}, 1); angebotZeichnen()">✕</button></span></div>`).join('')}
+      ${drin.map((p, n) => p.x ? zeile(p.x, a.artikel.indexOf(p.x), false, pfeile(p.k, n))
+        : `<div class="row">${pfeile(p.k, n)}<span>${p.e.menge > 1 ? String(p.e.menge).replace('.', ',') + '× ' : ''}${esc(p.e.name)}<br><span class="muted small">${preisFeld(p.e.preis, `eigenePreis(${a.eigene.indexOf(p.e)}, this.value)`, p.e.name)}${p.e.menge > 1 ? ' je Stück' : ''}</span></span><span class="menge"><button class="pill sm" aria-label="${esc(p.e.name)} entfernen" onclick="eigeneWeg('${p.k}')">✕</button></span></div>`).join('')}
       <div class="row"><span>Rabatt</span><span class="menge"><button class="pill sm${a.referenz ? ' sel' : ''}" aria-pressed="${a.referenz}" onclick="angebotRabatt(${a.referenz ? 0 : 20}, ${!a.referenz})">Referenz 20 %</button><input id="a-rabatt" class="prozent" inputmode="decimal" value="${a.rabatt ? String(a.rabatt).replace('.', ',') : ''}" placeholder="0" onchange="angebotRabatt(this.value, false)" aria-label="Rabatt in Prozent">%</span></div>
       ${a.rabatt && !leer ? `<div class="row muted"><span>Ohne Rabatt</span><span>${euro(summe)}</span></div>` : ''}
       <div class="row"><b>Gesamt inkl. MwSt.</b><b>${euro(summe * (1 - a.rabatt / 100))}</b></div></div>
@@ -1000,7 +1005,11 @@ function angebotFilter(v) {
 }
 function angebotMenge(i, d) {
   const x = angebot.artikel[i];
-  angebot.menge[x.id] = Math.max(0, (angebot.menge[x.id] || 0) + d); angebotZeichnen();
+  const vorher = angebot.menge[x.id] || 0, k = 'a' + x.id;
+  angebot.menge[x.id] = Math.max(0, vorher + d);
+  if (!vorher && angebot.menge[x.id]) angebot.reihe.push(k);   // neu im Angebot: kommt ans Ende
+  if (!angebot.menge[x.id]) angebot.reihe = angebot.reihe.filter(r => r !== k);
+  angebotZeichnen();
 }
 const zahl = t => { const v = String(t).trim().replace(/\s|€/g, ''); return Number(v.includes(',') || /^\d{1,3}(\.\d{3})+$/.test(v) ? v.replace(/\./g, '').replace(',', '.') : v); };   // 1.299,50 · 1.299 · 54.5
 function angebotRabatt(v, referenz) {
@@ -1008,16 +1017,27 @@ function angebotRabatt(v, referenz) {
   if (!(n >= 0 && n <= 100)) { toast('Rabatt zwischen 0 und 100 %.'); return angebotZeichnen(); }
   angebot.rabatt = Math.round(n * 100) / 100; angebot.referenz = referenz && n > 0; angebotZeichnen();
 }
+function eigeneRein(e) { e.k = 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); angebot.eigene.push(e); angebot.reihe.push(e.k); }
+function eigeneWeg(k) { angebot.eigene = angebot.eigene.filter(e => e.k !== k); angebot.reihe = angebot.reihe.filter(r => r !== k); angebotZeichnen(); }
+function verschieben(k, d) {
+  const r = angebot.reihe, i = r.indexOf(k), j = i + d;
+  if (i < 0 || j < 0 || j >= r.length) return;
+  [r[i], r[j]] = [r[j], r[i]]; angebotZeichnen();
+}
 function eigeneDazu() {
   const n = $('#ep-name').value.trim(), t = $('#ep-preis').value.trim(), preis = zahl(t);
   if (!n || !t || !(preis >= 0)) { toast('Gib eine Bezeichnung und einen Preis ein.'); return false; }
-  angebot.eigene.push({ name: n, menge: 1, preis: Math.round(preis * 100) / 100 });
+  eigeneRein({ name: n, menge: 1, preis: Math.round(preis * 100) / 100 });
   $('#ep-name').value = $('#ep-preis').value = ''; angebotZeichnen(); return true;
 }
 async function angebotAnlegen() {
   if (($('#ep-name').value.trim() || $('#ep-preis').value.trim()) && !eigeneDazu()) return;   // getippte Position nicht vergessen
   const a = angebot, knopf = $('#abtn');
-  const posten = [...(a.artikel || []).filter(x => a.menge[x.id]).map(x => ({ artikel: x.id, menge: a.menge[x.id], ...(a.preis[x.id] != null ? { preis: a.preis[x.id] } : {}) })), ...a.eigene];
+  const posten = a.reihe.map(k => {   // so, wie ihr sie sortiert habt
+    if (k[0] !== 'a') { const e = a.eigene.find(e => e.k === k); return e && { name: e.name, menge: e.menge, preis: e.preis }; }
+    const x = (a.artikel || []).find(x => 'a' + x.id === k);
+    return x && a.menge[x.id] && { artikel: x.id, menge: a.menge[x.id], ...(a.preis[x.id] != null ? { preis: a.preis[x.id] } : {}) };
+  }).filter(Boolean);
   if (!posten.length) return toast('Wähl mindestens eine Leistung aus.');
   knopf.disabled = true; knopf.textContent = 'Wird erstellt, dauert ein paar Sekunden…';
   try {
