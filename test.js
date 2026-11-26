@@ -397,21 +397,12 @@ w.post({ aktion: 'lexDaten', pw, id: anna });
   assert.strictEqual(q3.lineItems[1].unitPrice.netAmount, 58);   // ohne eigenen Preis: wie in Lexware
   assert.strictEqual(w.post({ aktion: 'lexAngebot', pw, id: anna, posten: [{ artikel: 'A1', menge: 1, preis: -5 }] }).code, 'preis');
 }
-// Angebot in der App ändern: Positionen und Rabatt aus Lexware laden, neue Fassung ersetzt die alte
-w.lexware.angebot = { introduction: 'Fahrzeug: Audi A6\nAls Referenzkunde erhalten Sie 20 % Rabatt.', totalPrice: { totalDiscountPercentage: 20, totalGrossAmount: 409.56 }, lineItems: [
-  { id: 'A1', type: 'service', name: 'Interieur Aufbereitung', quantity: 2, unitPrice: { netAmount: 190, grossAmount: 226.1, taxRatePercentage: 19 } },
-  { type: 'custom', name: 'Lederpflege', quantity: 1, unitPrice: { netAmount: 50, taxRatePercentage: 19 } },
-  { type: 'text', name: 'Hinweis' }] };
-const vorlage = w.post({ aktion: 'angebotLaden', pw, id: anna });
-assert.ok(vorlage.ok, vorlage.fehler);
-assert.strictEqual(JSON.stringify(vorlage.posten), '[{"artikel":"A1","name":"Interieur Aufbereitung","menge":2,"preis":226.1},{"artikel":"","name":"Lederpflege","menge":1,"preis":59.5}]');
-assert.strictEqual(vorlage.rabatt, 20); assert.strictEqual(vorlage.referenz, true); assert.strictEqual(vorlage.nr, 'AG0049');
-delete w.lexware.angebot;
-assert.strictEqual(w.post({ aktion: 'angebotLaden', pw, id: ben }).code, 'weg');
-const fassung = w.post({ aktion: 'lexAngebot', pw, wer: 'David', id: anna, ersetzt: true, rabatt: 20, referenz: true, posten: [{ artikel: 'A1', menge: 1 }, { name: 'Lederpflege', menge: 1, preis: 59.5 }] });
+// Alte Fassungen aus der Zeit, als „Angebot ändern“ neue Angebote anlegte: Liste bleibt bei neuen Angeboten erhalten
+w.props['ANGEBOT_' + anna] = JSON.stringify(Object.assign(JSON.parse(w.props['ANGEBOT_' + anna]), { ersetzt: ['Q-1'] }));
+const fassung = w.post({ aktion: 'lexAngebot', pw, wer: 'David', id: anna, posten: [{ artikel: 'A4', menge: 1 }] });
 assert.ok(fassung.ok, fassung.fehler);
 assert.strictEqual(JSON.stringify(fassung.angebot.ersetzt), '["Q-1"]');
-assert.match(fassung.lead.notizen, /David: Angebot AG0049 erstellt \(ersetzt AG0049, /);
+assert.strictEqual(w.post({ aktion: 'angebotLaden', pw, id: anna }).code, 'aktion');   // gibt es nicht mehr
 assert.strictEqual(w.post({ aktion: 'angebotPdf', pw, id: ben }).code, 'weg');
 assert.match(r.lead.notizen, /David: Angebot AG0049 erstellt \(409,56 €, 20 % Rabatt\): 2× Interieur Aufbereitung, Lederpflege$/);
 assert.strictEqual(w.post({ aktion: 'liste', pw }).leads.find((l) => l.id === anna).angebot.nr, 'AG0049');

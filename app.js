@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '49';
+const VERSION = '50';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 // Seit 25.11.2026 nur noch diese fünf (Farben wie in der Lead-Tabelle: gelb, blau, grün, rot)
@@ -774,7 +774,8 @@ function angebotKarte(l) {
       ${a.pdf ? `<div class="drei"><button class="pill" onclick="angebotWhatsApp(${id})">${ICON.wa}WhatsApp</button><button class="pill" onclick="angebotMail(${id}, this)">✉️ Mail</button><a class="pill" href="${esc(a.pdf)}" target="_blank" rel="noopener">📄 PDF</a></div>
       <p class="hint" style="margin:var(--gap) 0 0">WhatsApp: Das PDF und der Text gehen zusammen raus. Im Teilen-Menü WhatsApp Business wählen, dann ${esc((l.name || 'den Kunden').split(' ')[0])}, steht meist ganz oben.</p>`
         : `<a class="pill wide" style="margin:0" href="${esc(a.link)}" target="_blank" rel="noopener">Das PDF fehlt noch. In Lexware öffnen ↗</a>`}
-      <button class="pill wide" style="margin:var(--gap) 0 0" onclick="angebotAendern(${id}, this)">✏️ Angebot ändern</button>
+      <a class="pill wide" style="margin:var(--gap) 0 0" href="${esc(a.link.replace('/quotations/view/', '/quotations/edit/'))}" target="_blank" rel="noopener">✏️ Angebot in Lexware ändern</a>
+      <p class="hint" style="margin:var(--gap) 0 0">Dort ändern und speichern, dann zurück in die App: Die neue Fassung lädt von selbst, mit derselben Nummer.</p>
     </div>`;
 }
 const kundeFelder = () => Object.fromEntries(['email', 'strasse', 'plz', 'ort'].map(f => [f, $('#k-' + f)?.value.trim() || '']));
@@ -918,14 +919,7 @@ async function nachziehen(knopf) {
 // Angebotsseite im selben Fenster, gedacht fürs Telefonat: oben was im Angebot ist, darunter alle Artikel zum Suchen
 const preisVon = (a, x) => a.preis[x.id] ?? x.preis;
 const angebotSumme = a => [...(a.artikel || []).filter(x => a.menge[x.id]).map(x => preisVon(a, x) * a.menge[x.id]), ...a.eigene.map(x => x.preis * (x.menge || 1))].reduce((s, x) => s + x, 0);
-// Lexware lässt Angebote über die Schnittstelle nicht ändern. „Ändern“ lädt Positionen und Rabatt ins Angebots-Fenster,
-// daraus entsteht eine neue Fassung mit neuer Nummer. Die alte zählt in der Statistik nicht mehr.
-async function angebotAendern(id, knopf) {
-  knopf.disabled = true; knopf.textContent = 'Lädt aus Lexware…';
-  try { angebotOeffnen(id, await api('angebotLaden', { id })); }
-  catch (e) { toast(e.message); knopf.disabled = false; knopf.textContent = '✏️ Angebot ändern'; }
-}
-async function angebotOeffnen(id, vorlage) {
+async function angebotOeffnen(id) {
   const notiz = $('#notiz')?.value.trim();   // angefangene Notiz bleibt als Entwurf am Lead
   if (notiz) merke('jdv-entwurf', { ...lies('jdv-entwurf', {}), [id]: notiz });
   kundeSichern(id);
@@ -933,21 +927,9 @@ async function angebotOeffnen(id, vorlage) {
   offen = null;
   // preis: nur für dieses Angebot geändert; reihe: Reihenfolge der Positionen im Angebot ('a' + Artikel-id oder k einer eigenen)
   const a = angebot = { id, artikel: lexArtikelCache, menge: {}, preis: {}, eigene: [], reihe: [], rabatt: ref ? 20 : 0, referenz: ref, suche: '' };
-  if (vorlage) Object.assign(a, { rabatt: vorlage.rabatt, referenz: vorlage.referenz, ersetzt: vorlage.nr, posten: vorlage.posten });
   angebotZeichnen(); $('.panel').scrollTop = 0;
   try { lexArtikelCache = (await api('lexArtikel')).artikel.filter(x => !x.aus); } catch (e) { a.fehler = e.message; }
-  if (angebot !== a) return;
-  a.artikel = lexArtikelCache;
-  // Positionen der alten Fassung: Artikel aus der Liste bekommen ihre Menge, alles andere wird eigene Position
-  // Ein im Angebot geänderter Preis bleibt dabei erhalten
-  (a.posten || []).forEach(p => {
-    const x = p.artikel && (a.artikel || []).find(x => x.id === p.artikel), preis = Math.abs(p.preis - x?.preis) < 0.01 ? undefined : p.preis;
-    if (!x || (a.menge[x.id] && preis !== a.preis[x.id])) return eigeneRein({ name: p.name, menge: p.menge, preis: p.preis });
-    if (!a.menge[x.id]) a.reihe.push('a' + x.id);
-    a.menge[x.id] = (a.menge[x.id] || 0) + p.menge;
-    if (preis !== undefined) a.preis[x.id] = preis;
-  });
-  delete a.posten; angebotZeichnen();
+  if (angebot === a) { a.artikel = lexArtikelCache; angebotZeichnen(); }
 }
 function angebotZeichnen() {
   const p = $('.panel'); if (!p || !angebot) return;
@@ -969,9 +951,8 @@ function angebotHtml(a) {
     : `<label class="search">${ICON.search}<input id="a-suche" type="search" placeholder="Artikel suchen" value="${esc(a.suche)}" oninput="angebotFilter(this.value)" aria-label="Artikel suchen"></label>
       <div class="group" id="artikelliste">${a.artikel.map((x, i) => zeile(x, i, true)).join('')}</div>`;
   const leer = !drin.length;
-  return `<div class="sheet-head"><button class="pill" onclick="openLead(${js(a.id)})">Zurück</button><h2>${a.ersetzt ? 'Angebot ändern' : 'Angebot'}</h2><span></span></div>
-    <p class="hint">${a.ersetzt ? `Ändere, was du willst. Lexware lässt ein Angebot nicht nachträglich ändern, deshalb entsteht eine neue Fassung mit neuer Nummer und neuem PDF. ${esc(a.ersetzt)} zählt dann nicht mehr, in Lexware kannst du es löschen.`
-      : `Für ${esc(l.name || 'den Kunden')}. Es bekommt eine Nummer und ein PDF, danach schickst du es per WhatsApp oder Mail.`}</p>
+  return `<div class="sheet-head"><button class="pill" onclick="openLead(${js(a.id)})">Zurück</button><h2>Angebot</h2><span></span></div>
+    <p class="hint">Für ${esc(l.name || 'den Kunden')}. Es bekommt eine Nummer und ein PDF, danach schickst du es per WhatsApp oder Mail.</p>
     <div class="label">Im Angebot</div>
     <div class="group">${leer ? '<div class="row muted">Noch nichts. Tipp unten bei den Artikeln auf +.</div>' : ''}
       ${drin.map((p, n) => p.x ? zeile(p.x, a.artikel.indexOf(p.x), false, pfeile(p.k, n))
@@ -983,7 +964,7 @@ function angebotHtml(a) {
     <div class="label">Eigene Position</div>
     <div class="group"><div class="row eigene"><input id="ep-name" placeholder="z. B. Lederpflege" maxlength="255" aria-label="Bezeichnung"><input id="ep-preis" inputmode="decimal" placeholder="€" aria-label="Preis in Euro"><button class="pill sm" aria-label="Position hinzufügen" onclick="eigeneDazu()">+</button></div></div>
     <p class="hint">Preise sind Endpreise, so wie der Kunde sie zahlt. Im Angebot kannst du jeden Preis antippen und ändern, z. B. für ein größeres Auto. Das gilt nur für dieses Angebot, in Lexware bleibt der Artikel, wie er ist.</p>
-    <div class="leadfuss"><button class="big gold" id="abtn" onclick="angebotAnlegen()">${a.ersetzt ? 'Neue Fassung erstellen' : 'Angebot erstellen'}${leer ? '' : ' · ' + euro(summe * (1 - a.rabatt / 100))}</button></div>`;
+    <div class="leadfuss"><button class="big gold" id="abtn" onclick="angebotAnlegen()">Angebot erstellen${leer ? '' : ' · ' + euro(summe * (1 - a.rabatt / 100))}</button></div>`;
 }
 // Suche ohne Neuzeichnen, damit die Tastatur offen bleibt
 const preisFeld = (n, aendern, name) => `<input class="preis" inputmode="decimal" value="${(Number(n) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}" onfocus="this.select()" onchange="${aendern}" aria-label="Preis für ${esc(name)} ändern"> €`;
@@ -1041,11 +1022,11 @@ async function angebotAnlegen() {
   if (!posten.length) return toast('Wähl mindestens eine Leistung aus.');
   knopf.disabled = true; knopf.textContent = 'Wird erstellt, dauert ein paar Sekunden…';
   try {
-    const j = await api('lexAngebot', { id: a.id, posten, rabatt: a.rabatt, referenz: a.referenz, ersetzt: !!a.ersetzt });
+    const j = await api('lexAngebot', { id: a.id, posten, rabatt: a.rabatt, referenz: a.referenz });
     Object.assign(leads.find(x => x.id === a.id) || {}, j.lead, { lex: j.lex, angebot: j.angebot });
     if (j.pdf64) pdfCache[a.id] = alsPdf(j.pdf64, j.angebot.nr);
     if (angebot === a) { openLead(a.id); $('#angebotkarte')?.scrollIntoView({ block: 'center' }); }
-    toast(a.ersetzt ? `Neue Fassung ${j.angebot.nr} erstellt, sie ersetzt ${a.ersetzt}. Jetzt verschicken.` : `Angebot ${j.angebot.nr} erstellt. Jetzt per WhatsApp oder Mail schicken.`); render();
+    toast(`Angebot ${j.angebot.nr} erstellt. Jetzt per WhatsApp oder Mail schicken.`); render();
   } catch (e) { toast(e.message); if (angebot === a) angebotZeichnen(); }
 }
 
@@ -1255,7 +1236,6 @@ function demoApi(aktion, d) {
       ['a3', 'Interieur Aufbereitung', 226.1, 'Stück'], ['a4', 'Lackaufbereitung One-Step-Politur', 380.8, 'Aufwand'], ['a5', 'Polierarbeiten', 65.45, 'Stunde'],
       ['a6', 'Reinigung & Pflege von Ledersitzen', 41.65, 'Stück'], ['a7', '2 Stufen Keramikversiegelung', 714, 'Stück']].map(([id, name, preis, einheit]) => ({ id, name, preis, einheit }));
     if (aktion === 'metaVerbinden') return ok({ konto: 'JD Brüder (Demo)' });
-    if (aktion === 'angebotLaden') return l.angebot ? ok({ nr: l.angebot.nr, rabatt: 20, referenz: true, posten: [{ artikel: 'a1', name: 'Auftragspauschale', menge: 1, preis: 58 }, { artikel: '', name: 'Lederpflege', menge: 2, preis: 45 }] }) : nein(new Error('Zu diesem Lead gibt es noch kein Angebot.'));
     if (aktion === 'statistik') {
       const tag = n => ymd(new Date(Date.now() - n * 864e5));
       return ok({ meta: { ausgaben: 312.45, impressionen: 40210, klicks: 812, waehrung: 'EUR' },
@@ -1314,6 +1294,11 @@ render();
 laden(true);
 setInterval(() => { if (!document.hidden) laden(true); }, 60000);
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js');
+// Zurück in der App (z. B. nach dem Ändern in Lexware): Angebot des offenen Leads frisch holen
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || !lexAn || !offen || !leads.find(x => x.id === offen)?.angebot) return;
+  pdfLaden(offen);
+});
 // Neue Version online? Beim Zurückkommen in die App prüfen und neu laden. Am Handy bleibt die App sonst tagelang im
 // Hintergrund offen und zeigt die alte Version. Nicht, solange ein Fenster (Lead, Angebot, Setup) offen ist.
 document.addEventListener('visibilitychange', async () => {

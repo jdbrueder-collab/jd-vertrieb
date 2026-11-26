@@ -46,7 +46,7 @@ function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
     if (d.aktion !== 'anfrage') pruefe(d.pw); // nur das Anfrageformular der Website kommt ohne Passwort
-    const aktion = { anfrage, liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos, vorlage, lexArtikel, lexDaten, lexAngebot, gesendet, angebotMail, angebotPdf, angebotLaden, artikelAus, nachziehen, statistik, metaVerbinden }[d.aktion];
+    const aktion = { anfrage, liste, speichern, ki, feedback, push: pushAn, pushTest, foto, fotos, vorlage, lexArtikel, lexDaten, lexAngebot, gesendet, angebotMail, angebotPdf, artikelAus, nachziehen, statistik, metaVerbinden }[d.aktion];
     if (!aktion) throw fehler('aktion', 'Unbekannte Aktion.');
     out = Object.assign({ ok: true }, aktion(d));
   } catch (err) {
@@ -743,7 +743,7 @@ function lexAngebot(d) {
   if (!posten.length) throw fehler('leer', 'Wähl mindestens eine Leistung aus.');
   const rabatt = Math.round(Math.min(100, Math.max(0, Number(d.rabatt) || 0)) * 100) / 100, rabattText = String(rabatt).replace('.', ',') + ' %';
   const { t, zeile } = finde(d.id), l = leseZeile(t, zeile);
-  const vorher = JSON.parse(props().getProperty('ANGEBOT_' + d.id) || 'null'), alt = d.ersetzt ? vorher : null;   // alt: „Ändern“ in der App
+  const vorher = JSON.parse(props().getProperty('ANGEBOT_' + d.id) || 'null');
   const kontakt = lexKontakt(d.id, l), auto = (l.antworten.find((a) => a[0] === 'Fahrzeug') || [])[1] || '';
   lexAdresseSicher(kontakt);
   const datum = (tage) => berlin(new Date(Date.now() + tage * 864e5), "yyyy-MM-dd'T'HH:mm:ss.SSSXXX");
@@ -763,8 +763,9 @@ function lexAngebot(d) {
   // Nummer, Summe und PDF. Das Angebot gibt es ab hier, deshalb geht ein Fehler danach nicht mehr verloren.
   const summe = posten.reduce((s, x) => s + x.menge * x.brutto, 0) * (1 - rabatt / 100);
   const angebot = { nr: '', summe: Math.round(summe * 100) / 100, pdf: '', link: LEX_APP + 'quotations/view/' + id, datum: berlin(new Date(), 'yyyy-MM-dd') };
-  const ersetzt = ((vorher && vorher.ersetzt) || []).concat(alt ? [alt.link.split('/').pop()] : []);
-  if (ersetzt.length) angebot.ersetzt = ersetzt;   // alte Fassungen zählen in der Statistik nicht, die Liste bleibt bei jedem neuen Angebot
+  // Bis 26.11.2026 legte „Angebot ändern“ neue Fassungen an. Die alten stehen in ersetzt und zählen in der Statistik nicht,
+  // die Liste bleibt bei jedem neuen Angebot erhalten. Seitdem wird in Lexware selbst geändert, ohne zweites Angebot.
+  if (vorher && vorher.ersetzt) angebot.ersetzt = vorher.ersetzt;
   let pdf64 = '';   // das PDF selbst, damit die App es gleich per WhatsApp teilen kann
   try {
     const q = lex('/v1/quotations/' + id);
@@ -778,7 +779,7 @@ function lexAngebot(d) {
     angebot.pdf = datei.getUrl();
   } catch (e) { console.warn('Angebot ' + id + ': ' + e.message); }
   props().setProperty('ANGEBOT_' + d.id, JSON.stringify(angebot));
-  const notiz = 'Angebot ' + (angebot.nr || '') + ' erstellt (' + (alt ? 'ersetzt ' + alt.nr + ', ' : '') + euro(angebot.summe) + (rabatt ? ', ' + rabattText + ' Rabatt' : '') + '): '
+  const notiz = 'Angebot ' + (angebot.nr || '') + ' erstellt (' + euro(angebot.summe) + (rabatt ? ', ' + rabattText + ' Rabatt' : '') + '): '
     + posten.map((x) => (x.menge === 1 ? '' : String(x.menge).replace('.', ',') + '× ') + x.name).join(', ');
   return Object.assign(speichern({ id: d.id, wer: d.wer, notiz: notiz.replace('Angebot  ', 'Angebot ') }), { lex: kontakt, angebot, pdf64 });
 }
@@ -829,19 +830,6 @@ function angebotMail(d) {
       + (String(d.wer || '').trim() || 'Dein Team') + '\nJD Brüder',
   });
   return gesendet(Object.assign({}, d, { weg: 'Mail', an: email }));
-}
-
-// Das letzte Angebot zum Ändern in der App: Positionen (Endpreise je Einheit) und Rabatt, frisch aus Lexware.
-// Ändern lässt Lexware ein Angebot über die Schnittstelle nicht, die App legt deshalb eine neue Fassung an (lexAngebot mit ersetzt).
-function angebotLaden(d) {
-  const a = JSON.parse(props().getProperty('ANGEBOT_' + d.id) || 'null');
-  if (!a) throw fehler('weg', 'Zu diesem Lead gibt es noch kein Angebot.');
-  const q = lex('/v1/quotations/' + a.link.split('/').pop()), p = lexProfil();
-  const posten = (q.lineItems || []).filter((x) => x.type !== 'text').map((x) => {
-    const u = x.unitPrice || {}, brutto = u.grossAmount != null ? u.grossAmount : (u.netAmount || 0) * (1 + (Number(u.taxRatePercentage) || 0) / 100);
-    return { artikel: x.id || '', name: String(x.name || '').trim(), menge: Number(x.quantity) || 1, preis: Math.round((p.ohneSteuer ? u.netAmount || 0 : brutto) * 100) / 100 };
-  });
-  return { nr: q.voucherNumber || a.nr, posten, rabatt: Number((q.totalPrice || {}).totalDiscountPercentage) || 0, referenz: /referenzkunde/i.test(q.introduction || '') };
 }
 
 // Das PDF des letzten Angebots für die App (base64), jedes Mal frisch aus Lexware. Sie teilt es per Teilen-Menü direkt
