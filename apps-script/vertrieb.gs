@@ -353,7 +353,7 @@ function claude(system, text, schema) {
 
 // Texte an Kunden (Setup), gelten fürs ganze Team. Die App setzt {Name}, {Wunsch}, {Nr}, {Ich} ein.
 // Leer = Standardtext der App. Bei „Nicht erreicht“ müssen {Name} und {Wunsch} bleiben.
-const TEXTE = ['WA_VORLAGE', 'TEXT_ANGEBOT_WA', 'TEXT_MAIL_BETREFF', 'TEXT_MAIL'];
+const TEXTE = ['WA_VORLAGE', 'TEXT_ANGEBOT_VORAB', 'TEXT_ANGEBOT_WA', 'TEXT_MAIL_BETREFF', 'TEXT_MAIL'];
 function vorlage(d) {
   const k = d.art || 'WA_VORLAGE', t = String(d.text != null ? d.text : d.vorlage || '').trim();
   if (!TEXTE.includes(k)) throw fehler('vorlage', 'Unbekannter Text.');

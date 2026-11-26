@@ -1,6 +1,6 @@
 // Oberfläche von JD Vertrieb. Die Daten liegen im Google Sheet, apps-script/vertrieb.gs liefert und speichert sie.
 // Aufbau wie Dayliner: render() zeichnet die Seite des aktiven Tabs, sheet() öffnet ein Bottom-Sheet.
-const VERSION = '50';
+const VERSION = '51';
 const PUSH_KEY = 'BBwu63Ow659Pf2usYbfTzsyorECngHUxD1P_Z8TrggWHDYfXmY3ivuQW8CFvfs83cd7pRvfmwgalEz1mcWpnlIM'; // öffentlicher Schlüssel des Push-Dienstes (push/)
 // Wie das Dropdown lead_status in den Lead-Tabellen. Neu = Status leer, da hat sich noch niemand gekümmert.
 // Seit 25.11.2026 nur noch diese fünf (Farben wie in der Lead-Tabelle: gelb, blau, grün, rot)
@@ -34,6 +34,7 @@ const fotoCache = {}, fotoStand = {}, fotoRest = {};   // Fotos je Lead, laufend
 // Texte an Kunden (Setup → Nachrichten an Kunden). Gelten fürs ganze Team und liegen im Google-Skript, sonst gilt der Standard.
 const TEXT_STANDARD = {
   WA_VORLAGE: 'Hallo {Name}, hier ist {Ich} von JD Brüder. Ich habe gerade versucht, dich wegen deiner Anfrage zum Thema {Wunsch} anzurufen. Wann passt es dir am besten für einen kurzen Rückruf?',
+  TEXT_ANGEBOT_VORAB: 'Hallo {Name}, hier ist {Ich} von JD Brüder. Ich mache dir gerade dein Angebot fertig und schicke es dir gleich hier rein.',
   TEXT_ANGEBOT_WA: 'Hallo {Name}, hier ist dein Angebot {Nr} von JD Brüder. Meld dich gern, wenn du Fragen hast.',
   TEXT_MAIL_BETREFF: 'Dein Angebot {Nr} von JD Brüder',
   TEXT_MAIL: 'Hallo {Name},\n\nim Anhang findest du dein Angebot {Nr}.\n\nMeld dich gern, wenn du Fragen hast.\n\nViele Grüße\n{Ich}\nJD Brüder',
@@ -188,6 +189,7 @@ function renderAlle() {
 // Aufbau wie in der Stempeluhr: Themenliste, jedes Thema öffnet ein eigenes Fenster
 const NACHRICHTEN = {
   WA_VORLAGE: { titel: 'WhatsApp: Nicht erreicht', kurz: 'Nicht erreicht', icon: '💬', sub: 'Wenn du jemanden nicht erreichst', felder: ['{Name}', '{Wunsch}', '{Ich}'] },
+  TEXT_ANGEBOT_VORAB: { titel: 'WhatsApp: Angebot kommt gleich', kurz: 'Angebot kommt', icon: '⏳', sub: 'Geht beim Erstellen des Angebots raus, ohne PDF', felder: ['{Name}', '{Wunsch}', '{Ich}'] },
   TEXT_ANGEBOT_WA: { titel: 'WhatsApp: Angebot', kurz: 'Angebot', icon: '📄', sub: 'Text zum PDF im Chat', felder: ['{Name}', '{Nr}', '{Ich}'], pdf: true },
   TEXT_MAIL: { titel: 'Mail: Angebot', kurz: 'Angebotsmail', icon: '✉️', sub: 'Betreff und Text, PDF im Anhang', felder: ['{Name}', '{Nr}', '{Ich}'], mail: true },
 };
@@ -964,6 +966,7 @@ function angebotHtml(a) {
     <div class="label">Eigene Position</div>
     <div class="group"><div class="row eigene"><input id="ep-name" placeholder="z. B. Lederpflege" maxlength="255" aria-label="Bezeichnung"><input id="ep-preis" inputmode="decimal" placeholder="€" aria-label="Preis in Euro"><button class="pill sm" aria-label="Position hinzufügen" onclick="eigeneDazu()">+</button></div></div>
     <p class="hint">Preise sind Endpreise, so wie der Kunde sie zahlt. Im Angebot kannst du jeden Preis antippen und ändern, z. B. für ein größeres Auto. Das gilt nur für dieses Angebot, in Lexware bleibt der Artikel, wie er ist.</p>
+    ${l.wa ? `<div class="group"><label class="row"><span>💬 Vorab per WhatsApp Bescheid geben<br><span class="muted small">Beim Erstellen geht der Chat auf mit „${esc(fuelle(texte.TEXT_ANGEBOT_VORAB, l).slice(0, 60))}…“. Danach steht ${esc((l.name || 'der Kunde').split(' ')[0])} im Teilen-Menü ganz oben.</span></span><input type="checkbox" switch ${lies('jdv-vorab', true) ? 'checked' : ''} onchange="merke('jdv-vorab', this.checked)"></label></div>` : ''}
     <div class="leadfuss"><button class="big gold" id="abtn" onclick="angebotAnlegen()">Angebot erstellen${leer ? '' : ' · ' + euro(summe * (1 - a.rabatt / 100))}</button></div>`;
 }
 // Suche ohne Neuzeichnen, damit die Tastatur offen bleibt
@@ -1022,7 +1025,12 @@ async function angebotAnlegen() {
   if (!posten.length) return toast('Wähl mindestens eine Leistung aus.');
   knopf.disabled = true; knopf.textContent = 'Wird erstellt, dauert ein paar Sekunden…';
   try {
-    const j = await api('lexAngebot', { id: a.id, posten, rabatt: a.rabatt, referenz: a.referenz });
+    const laeuft = api('lexAngebot', { id: a.id, posten, rabatt: a.rabatt, referenz: a.referenz });   // läuft weiter, auch wenn WhatsApp aufgeht
+    // Vorab-Nachricht ohne PDF: Dann ist der Kunde gleich der letzte Chat und steht beim Teilen des PDFs ganz oben.
+    // Kommt die Antwort nicht an (App im Hintergrund), holt die App das neue Angebot beim nächsten Öffnen aus Lexware.
+    const l = leads.find(x => x.id === a.id);
+    if (l?.wa && lies('jdv-vorab', true)) MOBIL ? (location.href = waLink(l, fuelle(texte.TEXT_ANGEBOT_VORAB, l))) : open(waLink(l, fuelle(texte.TEXT_ANGEBOT_VORAB, l)), '_blank', 'noopener');
+    const j = await laeuft;
     Object.assign(leads.find(x => x.id === a.id) || {}, j.lead, { lex: j.lex, angebot: j.angebot });
     if (j.pdf64) pdfCache[a.id] = alsPdf(j.pdf64, j.angebot.nr);
     if (angebot === a) { openLead(a.id); $('#angebotkarte')?.scrollIntoView({ block: 'center' }); }
